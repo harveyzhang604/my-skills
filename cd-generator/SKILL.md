@@ -20,13 +20,22 @@ metadata:
 - 禁止把 `cd-generator` 的版本号同步到主项目 `package.json`，也不要用主项目版本号覆盖本 skill 版本。
 - 所有任务目录必须位于 `/Users/zhanghua/.claude/skills/cd-generator/output/`。如果传入 `cd_generator_output/<task>` 或 `output/<task>`，脚本会自动解析到 skill 的 output 目录；如果传入项目 worktree 下的绝对路径，脚本会直接拒绝。
 
-## 核心原则
+## 核心原则与工作模式
 
-**重要**：图片生成是最后一步！工作流程必须严格按照以下顺序：
+### 两种工作模式
 
-1. ✅ 数据准备阶段（第1-5步）：完成故事、剧本、分镜、提示词和内容质检
-2. ✅ 图片生成阶段（第6步）：最后统一生成所有图片
-3. ✅ 进度报告：每完成一个步骤立即报告进度
+**模式A：批量大纲模式**（用于快速筛选创意）
+1. 用户提供故事方向和主题
+2. 生成10个不同的故事大纲变体
+3. 使用 LLM 多维度评分
+4. 用户查看评分报告，选择1-2个最佳剧本
+5. 对选中的剧本继续模式B
+
+**模式B：完整生成模式**（生成可用于 Scene2Talk 的完整内容）
+1. ✅ 数据准备阶段：故事大纲 → 详细剧本 → 分镜 → 提示词 → 内容质检
+2. ✅ 图片生成阶段：最后统一生成所有图片
+3. ✅ 数据整合：生成 final_output.json 和 HTML 预览
+4. ✅ 导入 Scene2Talk：用于英语口语练习
 
 **禁止**：边生成数据边生成图片，这会导致混乱和重复请求。
 
@@ -69,15 +78,39 @@ metadata:
 
 ## 依赖 Skills 与调用边界
 
-本 skill 编排另外三个能力：
+本 skill 编排另外两个能力：
 
 - `/shanyin-write`：负责故事大纲和逐章剧本。被 `cd-generator` 调用时必须使用 `shanyin-write` 的 `cd-generator Mode`，输出结构化 JSON，不走原始交互式暂停流程。
 - `/shanyin-direct`：负责每页漫画分镜和中英文图片提示词。被 `cd-generator` 调用时必须使用 `shanyin-direct` 的 `cd-generator Mode`，输出 16:9 横版 `storyboard` JSON，不输出九列拍摄分镜表，不暂停等待确认。
-- `/chatgpt-image` / OpenCLI 图片链路：只用于图片生成。`cd-generator` 默认通过 `scripts/smart_image_manager.sh` 统一批量提交、监控和下载，不逐页人工调用。
 
-如果依赖 skill 的原始说明要求“每一步暂停等待用户确认”，在 `cd-generator` 批处理模式中由本 skill 的阶段门控替代，不在子 skill 内暂停。
+**图片生成**：`cd-generator` 使用自己的 `scripts/smart_image_manager.sh` 统一批量提交、监控和下载，不调用 `/chatgpt-image` skill。`/chatgpt-image` skill 仅用于单图请求。
+
+如果依赖 skill 的原始说明要求”每一步暂停等待用户确认”，在 `cd-generator` 批处理模式中由本 skill 的阶段门控替代，不在子 skill 内暂停。
 
 ## 输入参数
+
+### 模式A：批量大纲模式
+
+```bash
+/cd-generator --batch \
+  --theme "职场新人成长" \
+  --batch-size 10 \
+  --genre workplace \
+  --level B1 \
+  --chapters 6 \
+  --pages 24
+```
+
+**参数说明**：
+- `--batch`：启用批量大纲模式
+- `--theme`：故事主题或方向（必需）
+- `--batch-size`：生成变体数量（默认10）
+- `--genre`：类型（romance/revenge/fantasy/family/workplace）
+- `--level`：语言难度（A2/B1/B2）
+- `--chapters`：章节数（默认6）
+- `--pages`：每章页数（默认24）
+
+### 模式B：完整生成模式
 
 ```typescript
 {
@@ -86,7 +119,8 @@ metadata:
   language_level: string,     // 语言难度：A2/B1/B2
   total_chapters?: number,    // 生产默认6-8；测试可设为1-2
   pages_per_chapter?: number, // 生产默认24；测试可设为3-6
-  art_style?: string         // 画风：manga（默认）
+  art_style?: string,         // 画风：manga（默认）
+  task_dir?: string          // 可选：继续已有任务（用于批量模式选中后继续）
 }
 ```
 
@@ -944,32 +978,129 @@ dejection → enlightenment → triumph (一张图里包含太多情绪变化)
 
 ## 使用示例
 
+### 完整工作流：从批量筛选到成品
+
+#### 第一阶段：批量生成和评分（模式A）
+
 ```bash
-# 生成一个测试漫剧（2章×3页）
+# 步骤1：用户提供故事方向
+# 例如："职场新人设计师的成长故事，要有真实的工作场景和人际关系"
+
+# 步骤2：批量生成10个故事大纲
+/cd-generator --batch \
+  --theme "设计师的第一步" \
+  --batch-size 10 \
+  --genre workplace \
+  --level B1
+
+# 步骤3：为每个大纲生成内容（自动调用 /shanyin-write）
+# 系统会自动生成10个不同角度的故事大纲
+
+# 步骤4：批量评分
+# 系统自动调用评分脚本，生成排名报告
+
+# 步骤5：用户查看评分报告
+# 报告包含：排名、平均分、优缺点、推荐度
+# 用户选择1-2个最佳剧本继续开发
+```
+
+**预期输出**：
+- 10个故事大纲（story_outline.json）
+- 10个评分报告（story_score.json）
+- 1个对比报告（batch_score_comparison.json）
+- 推荐继续开发的剧本列表
+
+**预计时间**：30-40分钟
+
+#### 第二阶段：完整生成（模式B）
+
+```bash
+# 步骤6：用户选择最佳剧本（例如选择了第3个）
+# 继续完整流程
+
+/cd-generator --continue <task_dir_3>
+
+# 或者从头开始生成单个完整剧本
 /cd-generator \
   --theme "设计师的第一步" \
-  --genre "workplace" \
-  --level "B2" \
+  --genre workplace \
+  --level B1 \
+  --chapters 6 \
+  --pages 24
+```
+
+**完整流程**：
+1. 生成详细剧本（每章24页，每页12-16句对话）
+2. 生成分镜描述（16:9横版，左/中/右分区）
+3. 提取中英文图片提示词
+4. 内容质检（对话、提示词、角色一致性）
+5. 批量生成图片（144张，约2-3小时）
+6. 数据整合（final_output.json）
+7. 生成HTML预览
+
+**预期输出**：
+- 6章完整剧本（144页）
+- 144个分镜描述
+- 144个英文提示词 + 144个中文提示词
+- 144张图片
+- 1个完整数据文件（可导入 Scene2Talk）
+- 1个HTML预览页面
+
+**预计时间**：3-4小时
+
+#### 第三阶段：导入 Scene2Talk
+
+```bash
+# 步骤7：将生成的数据导入 Scene2Talk 项目
+# 使用 final_output.json 中的数据
+# 包含：故事信息、角色、章节、页面、对话、图片路径
+
+# Scene2Talk 使用这些数据进行英语口语练习
+```
+
+### 快速测试模式
+
+```bash
+# 测试批量模式（3个变体，2章×3页）
+/cd-generator --batch \
+  --theme "咖啡店的故事" \
+  --batch-size 3 \
+  --genre workplace \
+  --level A2 \
+  --chapters 2 \
+  --pages 3
+
+# 测试完整模式（2章×3页）
+/cd-generator \
+  --theme "咖啡店的故事" \
+  --genre workplace \
+  --level A2 \
   --chapters 2 \
   --pages 3
 ```
 
 **预期输出**：
-- 6个分镜描述
-- 6个英文提示词文件 + 6个中文提示词文件
-- 6张图片
-- 1个完整的JSON数据文件
-
-**预计时间**：
-- 数据准备：5-10分钟
-- 图片生成：10-15分钟
-- 总计：15-25分钟
+- 批量模式：3个大纲 + 评分报告（5-10分钟）
+- 完整模式：6页完整内容 + 6张图片（15-25分钟）
 
 ---
 
-**版本**：v2.8.4
+**版本**：v2.9.0
 **更新日期**：2026-05-01
 **主要改进**：
+- **新增批量生成和评分功能**
+  - 新增 `scripts/score_story_outline.py`：使用 LLM 对故事大纲进行多维度评分
+  - 新增 `scripts/batch_generate_outlines.sh`：批量生成多个故事大纲变体
+  - 新增 `BATCH_SCORING.md`：批量生成和评分功能文档
+  - 支持生成10个剧本变体，评分后选择最佳的1-2个继续开发
+- **理清图片生成架构**
+  - 明确 cd-generator 使用自己的 `smart_image_manager.sh`
+  - `/chatgpt-image` skill 仅用于单图请求，不参与批处理
+  - 更新依赖 Skills 说明，移除对 `/chatgpt-image` 的调用
+- **评分维度**（每项0-10分）
+  - 故事吸引力、角色设定、冲突设计
+  - 口语练习适配度、情感曲线
+  - 职场真实性、创意新颖度
 - **对齐 shanyin-write 接口**
   - 明确 `/shanyin-write` 在 `cd-generator Mode` 下的故事策划和单章剧本输入字段
   - 强化 JSON-only、不暂停确认和 Scene2Talk 口语练习输出约束
@@ -990,6 +1121,7 @@ dejection → enlightenment → triumph (一张图里包含太多情绪变化)
   - 整理本 skill 的 `.gitignore`，忽略本地任务输出、日志、密钥和缓存，避免生成产物混入技能版本
 
 **历史版本**：
+- v2.8.4: 对齐 shanyin-write 和 shanyin-direct 接口
 - v2.8.3: 对齐 shanyin-direct 的 16:9 横版 storyboard JSON 契约
 - v2.8.2: 清理历史错放数据副本，确认项目侧只保留迁移说明
 - v2.8.1: 增加 TASK_DIR 路径护栏，阻止生成数据写入 Sense Talk 项目 worktree

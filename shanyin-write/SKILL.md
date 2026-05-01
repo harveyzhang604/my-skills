@@ -23,6 +23,42 @@ Read only what the task needs:
 
 When called by `cd-generator`, do not follow the original interactive pause-after-each-step workflow. Produce the requested JSON artifact directly because `cd-generator` owns the outer progress gates.
 
+### Two Calling Scenarios
+
+#### Scenario 1: Batch Outline Generation (for quick screening)
+
+**Input**:
+- `story_theme`: story theme or direction
+- `genre`: genre type
+- `language_level`: language difficulty
+- `total_chapters`: number of chapters
+- `pages_per_chapter`: pages per chapter
+- `art_style`: art style
+- `variant`: variant number (1-10), each variant should differ significantly in plot, characters, or conflict
+
+**Output**: `story_outline.json` (outline only, no detailed scripts)
+
+**Requirements**:
+- Each variant must have different story angles, character setups, or conflict designs
+- Example: for "designer growth", variant 1 could be "newbie meets strict mentor", variant 2 could be "team collaboration challenge", variant 3 could be "client demand conflict"
+- Ensure the story is suitable for speaking practice with realistic dialogue scenarios
+
+#### Scenario 2: Full Script Generation (for final production)
+
+**Story Outline Input**:
+- story theme, genre, language level, total chapters, pages per chapter, and art style
+- Scene2Talk speaking-practice goal and target learner context
+- required output file type: `story_outline.json`
+- production constraints: natural spoken English, short turns, page-level speaking goals, and JSON-only output
+
+**Chapter Script Input**:
+- complete `story_outline.json`
+- current `chapter_number` and corresponding `chapter_outlines[]`
+- previous chapter ending state (if any) and next chapter connection goal (if any)
+- each page serves speaking practice: 12-16 short English dialogues with natural reactions, clarifications, follow-ups, corrections, commitments, etc.
+- required output file type: `scripts/chapter{N}.json`
+- output constraints: JSON only, no Markdown explanation, no pause for confirmation
+
 Expected input from `cd-generator`:
 
 - story theme, genre, language level, total chapters, pages per chapter, and art style

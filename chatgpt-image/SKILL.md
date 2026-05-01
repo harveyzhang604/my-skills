@@ -1,12 +1,30 @@
 ---
 name: chatgpt-image
-description: Use when generating images through OpenCLI and ChatGPT Image, including single-image requests and cd-generator batch image generation support.
-trigger: 当用户想要使用 ChatGPT 生成图片时
+description: Use ONLY for single-image requests from users. NOT used by cd-generator (which has its own smart_image_manager.sh for batch processing).
+trigger: 当用户想要生成单张图片时（不是批量生成）
 ---
 
 # ChatGPT Image Generator Skill
 
-使用 OpenCLI 调用 ChatGPT Image 2 生成图片的 skill。
+使用 OpenCLI 调用 ChatGPT Image 2 生成**单张图片**的 skill。
+
+## 重要说明
+
+**此 skill 仅用于单图请求，不参与 cd-generator 批处理。**
+
+- ✅ 用户直接请求生成图片：使用此 skill
+- ❌ cd-generator 批量生成：使用 `cd-generator` 自己的 `smart_image_manager.sh`
+
+## 使用场景
+
+### 适用场景
+- 用户说："帮我生成一张图片"
+- 用户说："用 ChatGPT 生成图片"
+- 用户提供单个图片提示词
+
+### 不适用场景
+- cd-generator 批量生成漫剧图片（由 `smart_image_manager.sh` 处理）
+- 批量生成多张图片（应使用专门的批处理脚本）
 
 ## 核心功能
 
@@ -77,8 +95,8 @@ echo "⚠️ 图片生成超时，请手动访问链接查看"
 
 ## 实现要点
 
-1. **默认不优化用户提示词**：单图请求中，用户提供的提示词必须原样传递给 ChatGPT。
-2. **cd-generator 批处理例外**：如果由 `cd-generator` 调用，图片生成由 `/Users/zhanghua/.claude/skills/cd-generator/scripts/smart_image_manager.sh` 统一管理；此时只读取 `prompts/` 里的英文提示词，不读取 `prompts_zh/`，也不要把英文提示词翻译成中文。
+1. **默认不优化用户提示词**：用户提供的提示词必须原样传递给 ChatGPT
+2. **不参与 cd-generator 批处理**：cd-generator 使用自己的 `smart_image_manager.sh` 统一管理图片生成，包括提示词质量检查、批量提交、监控循环、智能重试等功能
 3. **足够的等待时间**：图片生成需要较长时间，必须设置足够的超时时间
 4. **循环检查**：不能一次性等待，要分三次检查，每次间隔不同时间
 5. **错误处理**：如果三次检查都未完成，提供 ChatGPT 链接供用户手动查看
