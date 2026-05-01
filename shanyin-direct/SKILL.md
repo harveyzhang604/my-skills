@@ -1,0 +1,69 @@
+---
+name: shanyin-direct
+description: Use when turning scripts or page beats into storyboard descriptions, shot language, visual composition, image prompts, or director notes; especially when cd-generator needs per-page storyboard JSON.
+---
+
+# Shanyin Direct
+
+This skill adapts the Shanyin director methodology for Scene2Talk and `cd-generator`.
+Use the bundled references for detailed director theory, shot design, genre style, and storyboard format.
+
+## Source References
+
+Read only what the task needs:
+
+- `references/core-methodology.md`: director workflow and core principles
+- `references/shot-design.md`: shot language, camera, movement, composition
+- `references/storyboard-format.md`: storyboard output structure
+- `references/genre-A-mood.md` through `genre-F-social.md`: style templates by mood, genre, action, theme, form, and social lens
+
+## cd-generator Mode
+
+When called by `cd-generator`, do not produce a full nine-column shooting storyboard table and do not pause for confirmation. Produce one compact JSON file per comic page.
+
+Expected input from `cd-generator`:
+
+- story title, genre, language level, and art style
+- character visual continuity notes and characters present on the page
+- chapter number, page number, scene location, and page-level speaking goal
+- English dialogue and Chinese translation for the page
+- continuity notes from adjacent pages when available
+- Scene2Talk constraints: 16:9 widescreen background, left/center/right or diagonal zoning, English-only visible text
+
+Required output shape:
+
+```json
+{
+  "chapter": 1,
+  "page": 1,
+  "storyboard": {
+    "composition": "16:9 widescreen manga scene with vertical or diagonal panel zones",
+    "left_zone": "",
+    "center_zone": "",
+    "right_zone": "",
+    "visual_elements": {},
+    "art_style": "Modern manga style",
+    "mood": "",
+    "color_scheme": "",
+    "image_prompt": "",
+    "image_prompt_zh": ""
+  }
+}
+```
+
+## Prompt Rules
+
+- `image_prompt` must be English and is the only field used for image generation.
+- `image_prompt_zh` must be Chinese and must describe the same scene for HTML preview and human review.
+- Default to 16:9 landscape / widescreen composition for Scene2Talk backgrounds.
+- Prefer left / center / right zones or diagonal zones. Avoid top / middle / bottom layouts unless the caller explicitly asks for vertical comic panels.
+- Describe visible subjects, actions, setting, lighting, mood, and spatial relationships. Do not describe invisible psychology.
+- Avoid overloaded effects, dense props, too many characters, and multi-step emotional transformations in one image.
+- Preserve character visual continuity from the story outline.
+
+## Director Constraints
+
+- Every visual choice must serve story, emotion, or user practice.
+- Use concrete, filmable language: visible actions, objects, blocking, lighting, composition.
+- Avoid abstract AI-style mood prose that cannot be drawn or filmed.
+- For `cd-generator`, prioritize image-generation-ready prompt clarity over long director analysis.

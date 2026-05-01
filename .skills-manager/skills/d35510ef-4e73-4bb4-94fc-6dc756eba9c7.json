@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "skill_id": "d35510ef-4e73-4bb4-94fc-6dc756eba9c7",
+  "path": "shanyin-direct",
+  "path_key": "shanyin-direct",
+  "enabled": true,
+  "tags": [],
+  "source": {
+    "type": "import",
+    "ref": null,
+    "subpath": null,
+    "branch": null
+  }
+}

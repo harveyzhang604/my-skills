@@ -1,0 +1,31 @@
+.DS_Store
+Thumbs.db
+
+# Runtime locks / local state
+.skills-manager.lock
+*.log
+*.tmp
+*.temp
+
+# Python / Node caches
+__pycache__/
+*.py[cod]
+node_modules/
+.pnpm-store/
+
+# Skill runtime outputs
+*/output/
+*/outputs/
+*/dist/
+*/build/
+
+# Local secrets and machine-specific config
+*.env
+*.env.*
+config/*.env
+*/config/*.env
+*.secret
+*.key
+
+# Nested Git repositories imported from standalone skills
+*/.git/

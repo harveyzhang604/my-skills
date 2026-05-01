@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "skill_id": "fc1b7467-ab05-469f-a2d5-27c0d40a74ab",
+  "path": "shanyin-write",
+  "path_key": "shanyin-write",
+  "enabled": true,
+  "tags": [],
+  "source": {
+    "type": "import",
+    "ref": null,
+    "subpath": null,
+    "branch": null
+  }
+}

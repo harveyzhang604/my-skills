@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "skill_id": "df8eed99-2410-4542-b9d1-04532e290ecc",
+  "path": "cd-generator",
+  "path_key": "cd-generator",
+  "enabled": true,
+  "tags": [],
+  "source": {
+    "type": "import",
+    "ref": null,
+    "subpath": null,
+    "branch": null
+  }
+}

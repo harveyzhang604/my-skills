@@ -1,0 +1,19 @@
+{
+  "name": "cd-generator",
+  "version": "2.8.4",
+  "updated_at": "2026-05-01",
+  "scope": "skill",
+  "separate_from": {
+    "project": "Sense Talk / Scene2Talk",
+    "version_source": "/Users/zhanghua/Documents/GitHub/ai-scene2talk/package.json"
+  },
+  "notes": [
+    "This version belongs only to the cd-generator skill.",
+    "Do not sync this version to the Sense Talk project package.json.",
+    "Do not use the Sense Talk project version as this skill version.",
+    "All generated task data must stay under /Users/zhanghua/.claude/skills/cd-generator/output.",
+    "The historical worktree copy of 20260429_235435_bakery_adventure has been moved out of the project path after migration.",
+    "shanyin-direct cd-generator mode is aligned to 16:9 left/center/right or diagonal storyboard JSON.",
+    "shanyin-write cd-generator mode is aligned to structured story outline and chapter script JSON inputs."
+  ]
+}
