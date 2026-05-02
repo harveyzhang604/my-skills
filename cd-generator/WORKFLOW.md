@@ -42,9 +42,9 @@ LLM 多维度评分（7个维度，0-10分）
 
 ---
 
-### 阶段二：故事脉络和角色设定
+### 阶段二：故事脉络、全量角色卡和场景基调图
 
-**目标**：为选中的剧本生成完整的故事框架和角色设定
+**目标**：为选中的剧本生成完整故事框架和视觉连续性资产
 
 ```
 选中的故事大纲
@@ -54,32 +54,54 @@ LLM 多维度评分（7个维度，0-10分）
   - 关键转折点
   - 情感基调
     ↓
-生成角色卡片数据
-  - 角色名称和描述
-  - 阵营分类
-  - 视觉描述
+抽取全量角色/实体卡
+  - 主角、反派、盟友、关键家人
+  - 前世身份、组织/族群代表
+  - 拟人化 AI、古代文明/系统等视觉实体
+  - 每张卡包含中英双语介绍、视觉描述、连续性标签
+  - 英文字段用于后续图片提示词拼接，中文字段用于人工审稿
+  - 每张卡包含英文参考图提示词
     ↓
 生成角色头像提示词
     ↓
-（可选）生成角色头像图片
+生成统一视觉资产 sheet
+  - 角色、群体、AI、文明遗迹、记忆森林等扩展实体统一处理
+  - 固定 16:9、2 行 x 4 列
+  - 每张 8 格
+  - 超过 8 个自动拆成多张
+  - 最后一张不足 8 个就留空格
+    ↓
+裁切成单独资产卡图片并命名
+    ↓
+生成 2 张场景基调图提示词
+  - 自然/神秘森林基调
+  - 古代/数字文明或对立阵营基调
+  - 不是纯氛围图，也不是精确地图
+  - 要包含核心场景样貌、风格情绪、可复用视觉元素、材质/色彩规则和粗略空间关系
+  - 可以有中心石门/AI核心、左右延展树根/通道、前中后景等空间锚点，但不锁死精确方位
+    ↓
+（可选）生成角色头像图和场景基调图
     ↓
 用户确认后继续
 ```
 
 **命令**：
 ```bash
-# 生成故事脉络和角色卡片
+# 生成故事脉络、全量角色卡和场景基调图提示词
 python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/generate_story_arc_and_cards.py <task_dir>
 
-# （可选）生成角色头像图片
-# 使用 character_prompts/ 中的提示词
+# （可选）生成视觉资产 sheet、自动裁切资产卡、生成场景基调图
+python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/generate_visual_reference_images.py <task_dir>
 ```
 
 **输出**：
 - story_arc.json（故事脉络）
-- character_cards.json（角色卡片数据）
+- character_cards.json（全量角色/实体卡 + 场景基调卡）
 - character_prompts/（角色头像提示词）
-- character_images/（角色头像图片，可选）
+- character_sheets/（角色/实体统一视觉资产 sheet，固定 2x4，每张 8 格）
+- character_images/（从 sheet 裁切出的单独角色/实体资产卡）
+- scene_tone_prompts/（2 张场景基调图提示词）
+- scene_tone_images/（场景基调图，可选）
 
 **示例格式**：
 
@@ -130,6 +152,11 @@ python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/generate_story_arc_a
 提取并保存提示词
   - 144个英文提示词（用于生成图片）
   - 144个中文提示词（用于预览和审稿）
+    ↓
+生成带角色/场景文字参考的增强提示词
+  - 从 character_cards.json 匹配本页角色/实体
+  - 从 scene_tone_cards 匹配场景基调
+  - 输出 prompts_with_refs/，作为实际提交给生图服务的 prompt
     ↓
 内容质检
   - 对话自然度
@@ -200,6 +227,7 @@ Scene2Talk 项目
 - 管理任务目录和进度
 - 调用其他 skills
 - 批量图片生成管理（smart_image_manager.sh）
+- 提交前生成 `prompts_with_refs/`，把本页角色卡和场景基调卡的英文文字参考并入 prompt
 - 每张图的 OpenCLI 提交/检查/下载调用 chatgpt-image 服务
 - 数据整合和输出
 
@@ -220,6 +248,7 @@ Scene2Talk 项目
 - 可直接响应用户单图请求
 - 可被 cd-generator 或其它 skills 复用
 - 不负责批量进度、任务目录、提示词质检或 `image_links.json`
+- 当前 OpenCLI 文本命令不支持直接附加本地角色卡图片；需要图片参考时由调用方先把角色卡文字描述并入 prompt，未来切到支持 image reference 的 API 后再接入 `.refs.json` 中的图片路径
 
 ## 关键特性
 
@@ -306,7 +335,11 @@ Scene2Talk 项目
     │   ├── chapter1_page1.json     # 分镜描述
     │   └── ...
     ├── prompts/
-    │   ├── chapter1_page1.txt      # 英文提示词（用于生成图片）
+    │   ├── chapter1_page1.txt      # 基础英文提示词
+    │   └── ...
+    ├── prompts_with_refs/
+    │   ├── chapter1_page1.txt      # 实际提交生图的增强提示词
+    │   ├── chapter1_page1.refs.json # 本页匹配到的角色/场景参考元数据
     │   └── ...
     ├── prompts_zh/
     │   ├── chapter1_page1.txt      # 中文提示词（用于预览）

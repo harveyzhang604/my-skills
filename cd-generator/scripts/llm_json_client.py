@@ -189,6 +189,29 @@ Rules:
 - Match the requested language_level.
 - Return valid JSON only.""",
 
+    "generate_story_arc": """You generate a compact Story Arc from a selected Scene2Talk comic-drama outline.
+
+Return JSON only with:
+{
+  "story_arc": [
+    {
+      "chapter": number,
+      "title": string,
+      "title_en": string,
+      "core_events": string,
+      "key_turning_point": string,
+      "emotional_tone": string
+    }
+  ]
+}
+
+Rules:
+- Create one story_arc item for every chapter in the outline.
+- Keep core_events concrete and useful for later chapter script generation.
+- key_turning_point should identify the main plot or relationship shift.
+- emotional_tone should be concise.
+- Return valid JSON only.""",
+
     "generate_chapter_pages": """You are shanyin-write running in cd-generator Mode.
 
 Generate a chunk of detailed comic-drama chapter pages for Scene2Talk English speaking practice.
@@ -302,6 +325,67 @@ Rules:
 - Explicitly include UI safety margins: avoid the top 12% of the image for speech bubbles, faces, and key readable text; keep a 6% left/right edge margin for bubbles, faces, and important props.
 - image_prompt_zh must be Chinese and describe the same scene as image_prompt.
 - Preserve character visual continuity from the story outline.
+- Return valid JSON only.""",
+
+    "generate_story_visual_assets": """You create visual continuity assets for a Scene2Talk comic-drama story.
+
+Return JSON only with:
+{
+  "character_cards": [
+    {
+      "name": string,
+      "name_en": string,
+      "card_type": "character|group|entity|past_identity",
+      "importance": "primary|secondary|background|visual_anchor",
+      "faction": string,
+      "role": string,
+      "description_zh": string,
+      "description_en": string,
+      "personality_or_function_zh": string,
+      "personality_or_function_en": string,
+      "visual_description_zh": string,
+      "visual_description_en": string,
+      "continuity_tags": string[],
+      "continuity_tags_zh": string[],
+      "source_mentions": string[],
+      "image_prompt": string
+    }
+  ],
+  "factions": {
+    "heroes": string[],
+    "villains_or_opposition": string[],
+    "neutral_or_testers": string[],
+    "support": string[],
+    "groups_or_entities": string[]
+  },
+  "scene_tone_cards": [
+    {
+      "id": string,
+      "title": string,
+      "title_en": string,
+      "purpose": string,
+      "visual_mood": string,
+      "color_palette": string,
+      "key_locations": string[],
+      "continuity_rules": string[],
+      "image_prompt": string
+    }
+  ]
+}
+
+Rules:
+- Character cards are for visual continuity in later image prompts, not just for protagonists.
+- Include every explicit character from the story outline.
+- Also include important named characters, hidden identities, opposing leaders, missing family members, recurring group representatives, and personified or visually dominant entities if they appear in summary, chapter summaries, or page beats.
+- For groups/entities, make a card when they affect repeated image style or conflict, such as an AI, civilization, exile group, memory forest, or recurring ancient system.
+- Do not invent a large cast. Prefer 8-14 useful cards for a 6-10 chapter story unless the outline clearly names more.
+- Include exactly 2 scene_tone_cards. They should establish the overall world visual bible: one for the natural/mystical forest side, one for the ancient/digital/civilization or opposition side when relevant.
+- Image prompts must be English, concrete, renderable, and suitable for 16:9 widescreen visual reference images.
+- Scene tone image prompts must show concrete core location appearance, reusable visual motifs, material/color rules, and rough spatial relationships.
+- Scene tone images are not exact maps and not pure mood boards. They should include spatial anchors such as a central gate/core, surrounding roots/rings/pathways, and foreground/midground/background layers, without locking precise coordinates.
+- Scene tone image prompts should not include speech bubbles. They are world visual reference images, not story pages.
+- Character cards must be bilingual: Chinese fields are for human review, English fields are for prompt assembly.
+- image_prompt must use the English fields and should be portrait/reference-sheet style with clear visual traits, no speech bubbles, no random text.
 - Return valid JSON only.""",
 }
 

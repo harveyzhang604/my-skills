@@ -1,6 +1,6 @@
 {
   "name": "cd-generator",
-  "version": "2.11.0",
+  "version": "2.15.0",
   "updated_at": "2026-05-02",
   "scope": "skill",
   "separate_from": {
@@ -17,6 +17,10 @@
     "shanyin-write cd-generator mode is aligned to structured story outline and chapter script JSON inputs.",
     "v2.10.0: Added Stage 2 - Story Arc and Character Cards generation between batch screening and detailed script.",
     "v2.9.0: Added batch generation and scoring features for story outlines.",
-    "v2.11.0: Modularized image generation. chatgpt-image is the reusable single-image/OpenCLI service; cd-generator owns batching and calls that service for each image operation."
+    "v2.11.0: Modularized image generation. chatgpt-image is the reusable single-image/OpenCLI service; cd-generator owns batching and calls that service for each image operation.",
+    "v2.12.0: Stage 2 now generates bilingual full character/entity visual cards plus exactly two scene tone prompts for world-style continuity.",
+    "v2.13.0: Visual reference images use fixed 16:9 2x4 sheets with 8 assets per sheet; all character/entity cards are cropped from sheets, and overflow splits into multiple sheets.",
+    "v2.14.0: Scene tone images are now defined as world visual bible images: concrete core locations, reusable motifs, material/color rules, and rough spatial anchors, not pure mood boards or precise maps.",
+    "v2.15.0: Image generation now builds prompts_with_refs before submission, appending per-page character/entity continuity text and scene visual bible text from character_cards.json; current OpenCLI mode remains text-only and stores .refs.json for future image-reference API integration."
   ]
 }

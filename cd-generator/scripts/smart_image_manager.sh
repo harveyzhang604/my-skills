@@ -40,6 +40,7 @@ TASK_DIR="$(python3 "$GUARD" "$TASK_DIR")"
 IMAGES_DIR="$TASK_DIR/images"
 STORYBOARDS_DIR="$TASK_DIR/storyboards"
 PROMPTS_DIR="$TASK_DIR/prompts"
+PROMPTS_WITH_REFS_DIR="$TASK_DIR/prompts_with_refs"
 IMAGE_LINKS_FILE="$TASK_DIR/image_links.json"
 LOG_FILE="$TASK_DIR/image_generation.log"
 
@@ -81,6 +82,20 @@ audit_storyboard_prompts() {
     return 0
 }
 
+build_prompts_with_refs() {
+    local refs_script="$SCRIPT_DIR/build_prompts_with_refs.py"
+    if [ -f "$refs_script" ]; then
+        log "🧩 生成带角色/场景文字参考的图片提示词..."
+        if python3 "$refs_script" "$TASK_DIR" --force 2>&1 | tee -a "$LOG_FILE"; then
+            log "✅ 已更新增强提示词目录: $PROMPTS_WITH_REFS_DIR"
+        else
+            log "🛑 生成增强提示词失败，停止图片提交，避免缺少角色一致性约束。"
+            return 1
+        fi
+    fi
+    return 0
+}
+
 image_file_exists() {
     local filename="$1"
     [ -s "$IMAGES_DIR/$filename" ]
@@ -90,7 +105,13 @@ get_prompt_for_page() {
     local storyboard_file="$1"
     local chapter="$2"
     local page="$3"
+    local prompt_with_refs_file="$PROMPTS_WITH_REFS_DIR/chapter${chapter}_page${page}.txt"
     local prompt_file="$PROMPTS_DIR/chapter${chapter}_page${page}.txt"
+
+    if [ -s "$prompt_with_refs_file" ]; then
+        cat "$prompt_with_refs_file"
+        return 0
+    fi
 
     if [ -s "$prompt_file" ]; then
         cat "$prompt_file"
@@ -463,6 +484,7 @@ main() {
 
     # OpenCLI 批量提交前先做本地结构审查，避免把旧 prompt 直接送去生成
     audit_storyboard_prompts || return 1
+    build_prompts_with_refs || return 1
 
     # 第一阶段：提交缺失请求
     log "━━━ 第一阶段：提交图片生成请求 ━━━"

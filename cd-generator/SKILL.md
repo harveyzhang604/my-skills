@@ -2,7 +2,7 @@
 name: cd-generator
 description: Use when generating complete comic drama content for English speaking practice, including story outline, chapter scripts, page storyboards, image prompts, optional Story-Guided missions, images, and preview output.
 metadata:
-  version: 2.11.0
+  version: 2.15.0
   version_scope: cd-generator skill only, separate from the Scene2Talk app version.
 ---
 
@@ -32,9 +32,12 @@ metadata:
 
 **阶段二：故事脉络和角色设定**（确定核心框架）
 1. 生成整个故事脉络（8个章节的情节发展）
-2. 生成主要人物卡片图（角色设定和描述）
-3. 可选：生成角色头像图片
-4. 用户确认后继续
+2. 从完整框架剧本中抽取全量角色/实体视觉资产：主角、反派、盟友、关键家人、对立族群代表、前世身份、拟人化 AI/文明/系统等
+3. 为每个会影响画面一致性的角色/实体生成角色卡和头像/参考图提示词
+4. 生成统一视觉资产 sheet：角色、群体、AI、文明遗迹、记忆森林等扩展实体都按同一规则处理；固定 16:9、2 行 x 4 列、每张 8 格；超过 8 个自动拆成多张，最后一张不足 8 个就留空格，再按固定网格裁切成单独资产卡图片
+5. 生成 2 张整体场景基调图提示词，用来锁定世界风格、色彩、场景氛围
+6. 可选：生成角色总览 sheet、裁切角色卡和场景基调图
+7. 用户确认后继续
 
 **阶段三：完整内容生成**（生成可用于 Scene2Talk 的完整内容）
 1. ✅ 数据准备：详细剧本 → 分镜 → 提示词 → 内容质检
@@ -142,14 +145,23 @@ metadata:
     │   ├── story_outline.json      # 故事大纲
     │   ├── story_score.json        # 评分结果（阶段一）
     │   ├── story_arc.json          # 故事脉络（阶段二）
-    │   ├── character_cards.json    # 角色卡片数据（阶段二）
+    │   ├── character_cards.json    # 全量角色/实体卡 + 场景基调卡（阶段二）
     │   └── progress.json           # 进度跟踪
     ├── character_prompts/          # 角色头像提示词（阶段二）
     │   ├── Character1.txt
     │   └── Character2.txt
     ├── character_images/           # 角色头像图片（阶段二，可选）
-    │   ├── Character1.png
-    │   └── Character2.png
+    │   ├── 01_Rhino_Bart.png
+    │   └── 02_Monkey_Ah_Ling.png
+    ├── character_sheets/           # 角色总览 sheet（阶段二，可选）
+    │   ├── character_sheet_01.png
+    │   └── character_sheet_02.png
+    ├── scene_tone_prompts/         # 整体场景基调图提示词（阶段二）
+    │   ├── mystical_forest_world.txt
+    │   └── ancient_digital_civilization.txt
+    ├── scene_tone_images/          # 场景基调图（阶段二，可选）
+    │   ├── mystical_forest_world.png
+    │   └── ancient_digital_civilization.png
     ├── scripts/                    # 详细剧本（阶段三）
     │   ├── chapter1.json
     │   └── chapter2.json
@@ -159,6 +171,9 @@ metadata:
     ├── prompts/                    # 英文图片提示词（阶段三）
     │   ├── chapter1_page1.txt
     │   └── ...
+    ├── prompts_with_refs/          # 实际提交给生图服务的增强提示词：基础 prompt + 本页角色/场景文字参考
+    │   ├── chapter1_page1.txt
+    │   └── chapter1_page1.refs.json
     ├── prompts_zh/                 # 中文图片提示词（阶段三）
     │   ├── chapter1_page1.txt
     │   └── ...
@@ -250,6 +265,47 @@ echo "✅ 任务目录已创建: $TASK_DIR"
 ```bash
 # 更新 progress.json 中的 story_planning 状态为 "completed"
 ```
+
+### 第1.5步：故事脉络、全量角色卡和场景基调图
+
+从选中的框架剧本生成视觉连续性资产。这一步必须在详细剧本和分镜之前完成，因为后续每页图片提示词都要参考这些角色卡来保持人物统一。
+
+```bash
+python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/generate_story_arc_and_cards.py "$TASK_DIR"
+```
+
+**角色卡覆盖规则**：
+
+- 必须覆盖 `story.characters` 中的所有角色。
+- 必须继续扫描 `summary`、`chapter_outlines[].summary`、`page_beats[]`，抽取所有会影响画面一致性的显性角色或视觉实体。
+- 不只做主角：反派/对立阵营代表、盟友、关键家人、失踪人物、前世身份、组织/族群代表、拟人化 AI、古代文明/系统、长期出现的群体，都应有角色卡或实体卡。
+- 角色卡不是越多越好。默认 8-14 张；只有大纲明确命名更多角色时才扩展。
+- 每张角色卡必须是中英双语结构化字段：中英文名、类型（character/group/entity/past_identity）、重要性、阵营、故事作用中文/英文、视觉描述中文/英文、连续性标签中英、来源片段、英文参考图提示词。
+- 后续图片提示词拼接优先使用英文字段：`name_en`、`description_en`、`visual_description_en`、`continuity_tags`、`image_prompt`；中文字段用于人工审稿和确认。
+- 输出必须包含 exactly 2 张 `scene_tone_cards`，用于生成整体场景基调图；它们是风格参考图，不放气泡和对白。
+- 场景基调图不是纯氛围图，也不是精确地图，而是“世界视觉规范图”：必须包含核心场景大概样貌、风格情绪、可复用视觉元素、材质/色彩规则和粗略空间关系。
+- 场景基调图可以提示中心石门/AI核心、左右延展的树根/通道、前中后景层次等空间锚点，但不要锁死精确方位，避免限制后续分镜构图。
+- 视觉参考图生成必须先做 16:9 总览 sheet，再裁切。角色、群体、AI、文明遗迹、记忆森林等扩展实体全部使用同一固定网格：2 行 x 4 列，每张 8 格；超过 8 个必须拆成多张，最后一张不足 8 个就留空格。不要一人一张大图，也不要一张塞 10/12/16 个导致裁切坐标和细节不稳定。
+
+**输出**：
+
+- `$TASK_DIR/data/story_arc.json`
+- `$TASK_DIR/data/character_cards.json`
+- `$TASK_DIR/character_prompts/*.txt`
+- `$TASK_DIR/scene_tone_prompts/*.txt`
+
+**可选生成视觉参考图**：
+
+```bash
+python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/generate_visual_reference_images.py "$TASK_DIR"
+```
+
+输出：
+
+- `$TASK_DIR/character_sheets/character_sheet_*.png`
+- `$TASK_DIR/character_images/*.png`
+- `$TASK_DIR/scene_tone_images/*.png`
+- `$TASK_DIR/data/visual_reference_manifest.json`
 
 ### 第2步：逐章创作剧本
 
@@ -490,11 +546,19 @@ python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/quality_gate.py "$TA
 
 **重要**：这是最后一步！只有在前5步全部完成且内容质检没有 error 后才执行。
 
-使用智能图片生成管理器，一键完成提交、监控、下载全流程。图片生成只读取 `$TASK_DIR/prompts/` 中的英文提示词，不使用中文提示词。
+使用智能图片生成管理器，一键完成提交、监控、下载全流程。图片生成优先读取 `$TASK_DIR/prompts_with_refs/` 中的增强英文提示词；没有增强文件时才回退到 `$TASK_DIR/prompts/`。中文提示词只用于预览和人工审稿，不用于提交生图。
+
+**角色/场景文字参考规则**：
+
+- 图片提交前必须运行 `scripts/build_prompts_with_refs.py`，从 `data/character_cards.json` 自动匹配本页出场角色/实体和场景基调卡。
+- 增强 prompt 会追加 `Character continuity references` 和 `Scene visual bible references`，使用 `name_en`、`visual_description_en`、`continuity_tags`、场景 mood/palette/rules。
+- 当前 OpenCLI `chatgpt image` 命令只有 `<prompt>` 文本参数，没有 `--file`、`--image`、`--reference` 之类的附件参数，所以本阶段不把本地角色卡图片直接上传给 ChatGPT；角色一致性先通过英文文字参考约束实现。
+- 每个增强 prompt 旁边必须保存 `.refs.json`，记录匹配到的角色卡图片路径和场景卡。以后切到支持 image reference 的 API 或浏览器上传执行器时，就从这个 `.refs.json` 取图片路径接入，不重新设计数据结构。
 
 架构边界：
 
 - `cd-generator/scripts/smart_image_manager.sh`：批量、质检、节流、重试上限、任务状态、`image_links.json`。
+- `cd-generator/scripts/build_prompts_with_refs.py`：把基础图片提示词升级为带角色/场景文字参考的实际提交提示词。
 - `chatgpt-image/scripts/opencli_image_service.py`：单张图的 OpenCLI `submit/status/download/generate`。
 - 其它脚本如 `generate_images.sh`、`check_images.sh`、`check_and_download.sh`、`download_chatgpt_images.py` 是兼容入口，也必须走 `chatgpt-image` 服务。
 

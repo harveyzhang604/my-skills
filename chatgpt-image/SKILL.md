@@ -14,6 +14,12 @@ trigger: 当用户要用 ChatGPT Image/OpenCLI 生成图片、检查图片状态
 - `cd-generator`：编排层，负责批量、提示词质检、节流、`image_links.json`、进度、任务目录和最终审查；每张图的 OpenCLI 操作调用本 skill 的服务脚本。
 - 其它 skills：如果需要生图，也应调用本 skill，不要复制 OpenCLI 提交/检查/下载逻辑。
 
+## 参考图能力边界
+
+当前 `opencli chatgpt image` 命令只接受一个文本 `<prompt>`，没有 `--file`、`--image`、`--reference` 等参数。因此本 skill 的稳定模式是“文本 prompt 生图”，不能保证把本地角色卡 PNG 作为真实图片附件发送给 ChatGPT。
+
+需要角色一致性时，调用方应先把角色卡/场景卡的英文文字参考合并进 prompt，再调用本服务。`cd-generator` 已用 `prompts_with_refs/` 固化这条路径。以后如果改用支持 image reference 的 API，或补一个经过测试的 ChatGPT 网页上传执行器，再把调用方记录的本地图片路径接到真实参考图参数上。
+
 ## 核心脚本
 
 ```bash
