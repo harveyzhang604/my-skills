@@ -1,7 +1,7 @@
 {
   "name": "cd-generator",
-  "version": "2.9.0",
-  "updated_at": "2026-05-01",
+  "version": "2.11.0",
+  "updated_at": "2026-05-02",
   "scope": "skill",
   "separate_from": {
     "project": "Sense Talk / Scene2Talk",
@@ -15,7 +15,8 @@
     "The historical worktree copy of 20260429_235435_bakery_adventure has been moved out of the project path after migration.",
     "shanyin-direct cd-generator mode is aligned to 16:9 left/center/right or diagonal storyboard JSON.",
     "shanyin-write cd-generator mode is aligned to structured story outline and chapter script JSON inputs.",
+    "v2.10.0: Added Stage 2 - Story Arc and Character Cards generation between batch screening and detailed script.",
     "v2.9.0: Added batch generation and scoring features for story outlines.",
-    "Image generation: cd-generator uses smart_image_manager.sh, /chatgpt-image skill is for single-image requests only."
+    "v2.11.0: Modularized image generation. chatgpt-image is the reusable single-image/OpenCLI service; cd-generator owns batching and calls that service for each image operation."
   ]
 }

@@ -60,35 +60,35 @@ python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/score_story_outline.
 **工作流程**：
 1. 创建批次目录
 2. 为每个变体创建任务目录
-3. 生成请求文件（需要手动调用 /shanyin-write）
-4. 保存批次信息
+3. 调用 `scripts/generate_outline_with_llm.py` 自动生成 `data/story_outline.json`
+4. 保留 `data/outline_request.txt` 作为人工复核和失败重试参考
+5. 保存批次信息
 
 ### 3. 完整批量工作流
 
 ```bash
-# 步骤 1：批量生成故事大纲目录结构
+# 步骤 1：批量生成故事大纲
 ./scripts/batch_generate_outlines.sh \
   --theme "职场新人成长" \
   --batch-size 10 \
   --genre workplace \
   --level B1
 
-# 步骤 2：为每个任务生成故事大纲
-# （需要通过 Claude 调用 /shanyin-write，参考每个任务目录下的 outline_request.txt）
-
-# 步骤 3：批量评分
+# 步骤 2：批量评分
 python3 ./scripts/score_story_outline.py \
   /path/to/task1 \
   /path/to/task2 \
   /path/to/task3 \
   ...
 
-# 步骤 4：查看对比报告
+# 步骤 3：查看对比报告
 cat /path/to/output/batch_score_comparison.json
 
-# 步骤 5：选择最佳剧本，继续完整流程
+# 步骤 4：选择最佳剧本，继续完整流程
 # 使用原有的 cd-generator 流程完成选中的剧本
 ```
+
+脚本模式不会直接“调用 skill 说明书”。`batch_generate_outlines.sh` 通过真实执行器 `generate_outline_with_llm.py` 调用模型；对话模式里的 `/cd-generator` 才由 AI 读取并应用 `/shanyin-write` skill。
 
 ## 评分报告示例
 
@@ -144,10 +144,10 @@ CD_GENERATOR_LLM_ENDPOINT_MODE=claude
 
 ## 图片生成说明
 
-**重要**：cd-generator 使用自己的 `smart_image_manager.sh` 进行图片生成，不需要调用 `chatgpt-image` skill。
+**重要**：cd-generator 使用自己的 `smart_image_manager.sh` 进行批量编排，但每张图片的 OpenCLI 提交、状态检查和下载统一调用 `chatgpt-image` skill 的服务脚本。
 
-- `chatgpt-image` skill 仅用于单图请求
-- cd-generator 批处理使用 `smart_image_manager.sh`
+- `chatgpt-image` skill 是独立单图/OpenCLI 服务，可供多个 skills 复用
+- cd-generator 批处理使用 `smart_image_manager.sh` 管理批量、质检和任务状态
 - 支持 OpenCLI 和 YouMind API 两种模式
 
 ## 使用建议

@@ -1,194 +1,75 @@
 ---
 name: chatgpt-image
-description: Use ONLY for single-image requests from users. NOT used by cd-generator (which has its own smart_image_manager.sh for batch processing).
-trigger: 当用户想要生成单张图片时（不是批量生成）
+description: Use when generating, checking, or downloading ChatGPT Image outputs through OpenCLI, either for a direct single-image user request or as a reusable image service called by another skill.
+trigger: 当用户要用 ChatGPT Image/OpenCLI 生成图片、检查图片状态、下载图片，或其它 skill 需要复用生图能力时
 ---
 
 # ChatGPT Image Generator Skill
 
-使用 OpenCLI 调用 ChatGPT Image 2 生成**单张图片**的 skill。
+这个 skill 是独立的 ChatGPT Image 生图模块。它不负责故事、分镜、批量进度或任务目录，只负责“一张图”的 OpenCLI 操作：提交提示词、检查 ChatGPT 链接状态、下载生成图片。
 
-## 重要说明
+## 职责边界
 
-**此 skill 仅用于单图请求，不参与 cd-generator 批处理。**
+- `chatgpt-image`：单图服务层，封装 OpenCLI、链接解析、浏览器挂接修复、状态检查、下载保存。
+- `cd-generator`：编排层，负责批量、提示词质检、节流、`image_links.json`、进度、任务目录和最终审查；每张图的 OpenCLI 操作调用本 skill 的服务脚本。
+- 其它 skills：如果需要生图，也应调用本 skill，不要复制 OpenCLI 提交/检查/下载逻辑。
 
-- ✅ 用户直接请求生成图片：使用此 skill
-- ❌ cd-generator 批量生成：使用 `cd-generator` 自己的 `smart_image_manager.sh`
-
-## 使用场景
-
-### 适用场景
-- 用户说："帮我生成一张图片"
-- 用户说："用 ChatGPT 生成图片"
-- 用户提供单个图片提示词
-
-### 不适用场景
-- cd-generator 批量生成漫剧图片（由 `smart_image_manager.sh` 处理）
-- 批量生成多张图片（应使用专门的批处理脚本）
-
-## 核心功能
-
-1. 接收用户提示词（单图请求原样传递；被 `cd-generator` 调用时使用其英文 `prompts/` 文件）
-2. 调用 `opencli chatgpt image` 命令提交生成请求
-3. 实现智能循环检查机制：
-   - 第1次检查：等待 5 分钟
-   - 第2次检查：再等待 7 分钟
-   - 第3次检查：再等待 10 分钟
-4. 图片生成完成后自动下载到指定位置
-5. 返回生成的图片文件路径或 ChatGPT 链接
-
-## 使用流程
-
-### 步骤 1: 接收参数
-
-从用户输入中提取：
-- `prompt`: 图片生成提示词（必需）
-- `output_dir`: 输出目录（可选，默认为 `~/Pictures/chatgpt`）
-
-### 步骤 2: 执行生成命令
+## 核心脚本
 
 ```bash
-opencli chatgpt image "<prompt>" --op <output_dir> --verbose
+/Users/zhanghua/.claude/skills/chatgpt-image/scripts/opencli_image_service.py
 ```
 
-### 步骤 3: 循环检查机制
-
-实现三次检查循环：
+命令：
 
 ```bash
-# 第1次检查（5分钟后）
-sleep 300
-result1=$(opencli chatgpt image "<prompt>" --op <output_dir> --verbose 2>&1)
+# 提交一张图，返回 ChatGPT 对话链接 JSON
+python3 "$SERVICE" submit --prompt "$PROMPT" --repair-retries 2
 
-# 检查是否成功
-if [[ "$result1" == *"✓"* ]]; then
-  echo "图片生成完成"
-  exit 0
-fi
+# 检查链接里的图片是否生成
+python3 "$SERVICE" status --link "$CHATGPT_LINK" --repair-retries 1
 
-# 第2次检查（再等7分钟）
-sleep 420
-result2=$(opencli chatgpt image "<prompt>" --op <output_dir> --verbose 2>&1)
+# 下载已生成图片到指定文件
+python3 "$SERVICE" download --link "$CHATGPT_LINK" --output "$OUTPUT_FILE" --repair-retries 1
 
-if [[ "$result2" == *"✓"* ]]; then
-  echo "图片生成完成"
-  exit 0
-fi
-
-# 第3次检查（再等10分钟）
-sleep 600
-result3=$(opencli chatgpt image "<prompt>" --op <output_dir> --verbose 2>&1)
-
-if [[ "$result3" == *"✓"* ]]; then
-  echo "图片生成完成"
-  exit 0
-fi
-
-# 三次检查都未完成
-echo "⚠️ 图片生成超时，请手动访问链接查看"
+# 单图端到端生成：提交、等待、下载
+python3 "$SERVICE" generate --prompt "$PROMPT" --output "$OUTPUT_FILE" --wait-schedule "60,60,60,120,180"
 ```
 
-### 步骤 4: 返回结果
+所有命令都输出 JSON，调用方必须按 JSON 解析，不要 grep OpenCLI 原始输出。
 
-- 成功：返回图片文件路径
-- 超时：返回 ChatGPT 对话链接
-
-## 实现要点
-
-1. **默认不优化用户提示词**：用户提供的提示词必须原样传递给 ChatGPT
-2. **不参与 cd-generator 批处理**：cd-generator 使用自己的 `smart_image_manager.sh` 统一管理图片生成，包括提示词质量检查、批量提交、监控循环、智能重试等功能
-3. **足够的等待时间**：图片生成需要较长时间，必须设置足够的超时时间
-4. **循环检查**：不能一次性等待，要分三次检查，每次间隔不同时间
-5. **错误处理**：如果三次检查都未完成，提供 ChatGPT 链接供用户手动查看
-
-## 依赖要求
-
-- OpenCLI 已安装并配置
-- 已登录 ChatGPT 网页版（chatgpt.com）
-- ChatGPT 账号支持 Image 2 功能
-
-## 示例用法
+## 用户单图入口
 
 ```bash
-# 使用默认提示词
-/chatgpt-image
-
-# 使用自定义提示词
-/chatgpt-image "东方美女抖音带货视频"
-
-# 指定输出目录
-/chatgpt-image "科技感未来城市" --output ~/Desktop/ai-images
+/Users/zhanghua/.claude/skills/chatgpt-image/run.sh "提示词" "$HOME/Pictures/chatgpt"
 ```
 
-## 16:9宽屏漫画分镜设计规范
+默认不改写用户提示词。调用方如果需要风格、比例、安全区或双语气泡约束，应在调用前自己生成好最终 prompt。
 
-**重要**：所有提示词必须是16:9宽屏比例！
+## 输出约定
 
-### 分镜原则
+常见字段：
 
-1. **禁止上下分区**：宽屏不适合上下分区，会显得画面狭长
-2. **使用垂直或斜向分区**：根据内容灵活选择
-3. **主场景占60-70%**：突出主要内容
-4. **副场景占30-40%**：补充远景/特写/细节
+- `ok`: 操作是否成功。
+- `status`: `pending`、`READY:宽x高`、`PENDING`、`ERROR`、`completed`、`submit_failed`、`download_failed`。
+- `link`: ChatGPT 对话链接。
+- `warning`: OpenCLI 返回异常但已经拿到链接时的警告。
+- `submit_exit_code`、`submit_attempts`、`opencli_repaired`: 供批量编排记录和诊断。
+- `output_path`、`file_size`: 下载成功时返回。
+- `error`: 失败原因。
 
-### 推荐分镜模式
+## 稳定性策略
 
-#### 模式A：左侧大主场景 + 右侧上下小场景
-```
-┌─────────┬───────┐
-│         │ 上小  │
-│  主场景  │ (50%) │
-│ (60-70%)│       │
-│         ├───────┤
-│         │ 下小  │
-│         │ (50%) │
-└─────────┴───────┘
-```
-- 适用：单人情感表达、远景→主体→特写叙事
+- OpenCLI 浏览器挂接异常会自动执行 `opencli browser close` 和 `opencli doctor` 后重试。
+- 如果 OpenCLI 输出里已经包含 ChatGPT 链接，即使命令 exit code 非 0，也返回 `ok: true` 并附带 `warning`，由调用方后续轮询确认结果。
+- 下载时只认本次下载开始后的 PNG，避免误拿 `~/Downloads` 里的旧文件。
+- 批量调用方应先提交 1 张验证链路，连续失败时停止提交，避免刷出大量无效请求。
 
-#### 模式B：垂直三分割（远景-主场景-特写）
-```
-┌─────┬─────────┬─────┐
-│远景 │ 主场景   │特写 │
-│25%  │ (50%)   │25%  │
-└─────┴─────────┴─────┘
-```
-- 适用：多人互动、重逢场景、对比画面
+## 16:9 漫画提示词注意
 
-#### 模式C：斜向动态分区
-```
-┲━━━━━━━━━━━━━━━
-   ╲  主场景   ╱
-    ╲   60%   ╱
-     ╲       ╱
-      ╲下特写╱
-       ╲   ╱
-```
-- 适用：动态场景、情绪递进、叙事感
+本 skill 可以生成任何图片，但用于 Scene2Talk/cd-generator 时，调用方应提前把 prompt 处理好：
 
-### 构图要素
-
-- **远景/Establishing shot**：交代环境、氛围
-- **主场景/Main scene**：人物互动、核心动作
-- **特写/Close-up**：表情细节、关键道具、情感高潮
-- **对话气泡**：每页1-3个短英文气泡，不要超过3个
-
-### 示例提示词结构
-
-```
-16:9 widescreen manga panel. [分区方式描述]. [主场景描述]. [副场景描述]. [氛围/风格]. Speech bubbles: '英文对话1' and '英文对话2'. Modern manga style. English text only.
-```
-
-### 常见错误
-
-❌ 上下分区（40%/60%）——宽屏不适合
-❌ 单一场景无层次——缺少远景和特写
-❌ 过多对话气泡（>3个）——画面拥挤
-❌ 中文/日文/韩文文字——只允许英文
-
-## 注意事项
-
-1. 确保 ChatGPT 账号已登录且 cookie 有效
-2. 图片生成时间通常需要 5-15 分钟
-3. 如果网络不稳定，可能需要更长时间
-4. 建议在后台运行，避免阻塞其他任务
+- 16:9 landscape / widescreen。
+- 画面内气泡/字幕使用中英双语，英文在上、中文在下。
+- 顶部 12% 避开 UI，左右 6% 留安全边距。
+- 每个视觉场景最多 2 个气泡，整张图最多 6 个，默认优先 1-3 个。

@@ -2,7 +2,7 @@
 name: cd-generator
 description: Use when generating complete comic drama content for English speaking practice, including story outline, chapter scripts, page storyboards, image prompts, optional Story-Guided missions, images, and preview output.
 metadata:
-  version: 2.8.4
+  version: 2.11.0
   version_scope: cd-generator skill only, separate from the Scene2Talk app version.
 ---
 
@@ -22,18 +22,23 @@ metadata:
 
 ## 核心原则与工作模式
 
-### 两种工作模式
+### 三个阶段的工作流程
 
-**模式A：批量大纲模式**（用于快速筛选创意）
+**阶段一：批量大纲生成和评分**（快速筛选创意）
 1. 用户提供故事方向和主题
 2. 生成10个不同的故事大纲变体
 3. 使用 LLM 多维度评分
 4. 用户查看评分报告，选择1-2个最佳剧本
-5. 对选中的剧本继续模式B
 
-**模式B：完整生成模式**（生成可用于 Scene2Talk 的完整内容）
-1. ✅ 数据准备阶段：故事大纲 → 详细剧本 → 分镜 → 提示词 → 内容质检
-2. ✅ 图片生成阶段：最后统一生成所有图片
+**阶段二：故事脉络和角色设定**（确定核心框架）
+1. 生成整个故事脉络（8个章节的情节发展）
+2. 生成主要人物卡片图（角色设定和描述）
+3. 可选：生成角色头像图片
+4. 用户确认后继续
+
+**阶段三：完整内容生成**（生成可用于 Scene2Talk 的完整内容）
+1. ✅ 数据准备：详细剧本 → 分镜 → 提示词 → 内容质检
+2. ✅ 图片生成：最后统一生成所有图片
 3. ✅ 数据整合：生成 final_output.json 和 HTML 预览
 4. ✅ 导入 Scene2Talk：用于英语口语练习
 
@@ -69,12 +74,13 @@ metadata:
 - **人物和构图**：
   - 人物和活动分布在左/中/右，不要全部挤在一个角落
   - 关键表情、眼神、手势放在视觉焦点区域
-  - 对白气泡位置要避开UI遮挡区域
+  - 对白气泡位置要避开UI遮挡区域：顶部 12% 留给 Scene2Talk 顶部信息栏，左右 6% 留安全边距；重要脸部、气泡、文字和道具不要贴近画面边缘
 - **文字要求**：
-  - 每张图 1-3 个短英文 speech bubbles
-  - 过场页至少一个英文 caption
-  - 画面内所有文字必须是英文
-  - 禁止中文、日文、韩文、伪文字、乱码
+  - 气泡按可见场景分配：每个视觉场景最多 2 个中英双语 speech bubbles/captions，整张图最多 6 个；默认优先 1-3 个，只有多场景、群像或梦境蒙太奇页才允许接近 6 个
+  - 每个气泡必须短、自然、可读：英文尽量不超过 8 个词，中文尽量不超过 14 个字；英文在上、中文在下，例如 `"I must go. / 我必须去。"`
+  - 过场页至少一个中英双语 caption，优先放最能代表练习目标的一句
+  - `image_prompt` 本身用英文写给图片模型，但画面内对话/字幕的可见文字必须是中英双语配对
+  - 禁止日文、韩文、伪文字、乱码；不要写 English only 或 no Chinese
 
 ## 依赖 Skills 与调用边界
 
@@ -83,7 +89,7 @@ metadata:
 - `/shanyin-write`：负责故事大纲和逐章剧本。被 `cd-generator` 调用时必须使用 `shanyin-write` 的 `cd-generator Mode`，输出结构化 JSON，不走原始交互式暂停流程。
 - `/shanyin-direct`：负责每页漫画分镜和中英文图片提示词。被 `cd-generator` 调用时必须使用 `shanyin-direct` 的 `cd-generator Mode`，输出 16:9 横版 `storyboard` JSON，不输出九列拍摄分镜表，不暂停等待确认。
 
-**图片生成**：`cd-generator` 使用自己的 `scripts/smart_image_manager.sh` 统一批量提交、监控和下载，不调用 `/chatgpt-image` skill。`/chatgpt-image` skill 仅用于单图请求。
+**图片生成**：`cd-generator` 负责批量编排、提示词质检、节流、`image_links.json`、任务进度和图片审查；单张图片的 OpenCLI 提交、状态检查和下载统一调用 `/chatgpt-image` skill 的 `scripts/opencli_image_service.py`。不要在 `cd-generator` 里复制 OpenCLI 生图逻辑。
 
 如果依赖 skill 的原始说明要求”每一步暂停等待用户确认”，在 `cd-generator` 批处理模式中由本 skill 的阶段门控替代，不在子 skill 内暂停。
 
@@ -134,37 +140,52 @@ metadata:
     ├── README.md                    # 任务说明和图片链接记录
     ├── data/
     │   ├── story_outline.json      # 故事大纲
+    │   ├── story_score.json        # 评分结果（阶段一）
+    │   ├── story_arc.json          # 故事脉络（阶段二）
+    │   ├── character_cards.json    # 角色卡片数据（阶段二）
     │   └── progress.json           # 进度跟踪
-    ├── scripts/
-    │   ├── chapter1.json           # 第1章剧本
-    │   └── chapter2.json           # 第2章剧本
-    ├── storyboards/
-    │   ├── chapter1_page1.json     # 分镜描述（含提示词）
-    │   ├── chapter1_page2.json
+    ├── character_prompts/          # 角色头像提示词（阶段二）
+    │   ├── Character1.txt
+    │   └── Character2.txt
+    ├── character_images/           # 角色头像图片（阶段二，可选）
+    │   ├── Character1.png
+    │   └── Character2.png
+    ├── scripts/                    # 详细剧本（阶段三）
+    │   ├── chapter1.json
+    │   └── chapter2.json
+    ├── storyboards/                # 分镜描述（阶段三）
+    │   ├── chapter1_page1.json
     │   └── ...
-    ├── prompts/
-    │   ├── chapter1_page1.txt      # 英文图片提示词：用于实际生成图片
-    │   ├── chapter1_page2.txt
+    ├── prompts/                    # 英文图片提示词（阶段三）
+    │   ├── chapter1_page1.txt
     │   └── ...
-    ├── prompts_zh/
-    │   ├── chapter1_page1.txt      # 中文图片提示词：用于HTML预览和人工审稿
-    │   ├── chapter1_page2.txt
+    ├── prompts_zh/                 # 中文图片提示词（阶段三）
+    │   ├── chapter1_page1.txt
     │   └── ...
-    ├── missions/                    # 对话任务（可选，用于Story-Guided Free Talk）
-    │   ├── chapter1_page1.json     # 第1章第1页对话任务
-    │   ├── chapter1_page2.json
+    ├── missions/                   # 对话任务（阶段三，可选）
+    │   ├── chapter1_page1.json
     │   └── ...
-    ├── images/
+    ├── images/                     # 场景图片（阶段三）
     │   └── (生成的图片文件)
-    ├── quality/
-    │   ├── content_quality_report.md   # 内容质检报告
-    │   └── content_quality_report.json # 机器可读质检结果
+    ├── quality/                    # 质检报告（阶段三）
+    │   ├── content_quality_report.md
+    │   └── content_quality_report.json
     ├── image_links.json            # 图片生成链接记录
     └── output/
-        └── final_output.json       # 最终整合数据
+        ├── final_output.json       # 最终整合数据
+        └── preview.html            # HTML预览
 ```
 
 ## 工作流程
+
+### 调用模式边界
+
+`cd-generator` 有两种执行方式，不能混用：
+
+- **对话模式**：用户在 AI 对话里调用 `/cd-generator`。此时由 AI 读取本 skill，并按需读取 `/shanyin-write`、`/shanyin-direct` 的 skill 说明来生成内容。
+- **脚本模式**：用户运行 `scripts/*.sh` 或 `scripts/*.py`。Shell 脚本不能直接“调用 skill 说明书”，必须通过真实执行器调用模型。故事大纲脚本模式使用 `scripts/generate_outline_with_llm.py`，章节剧本脚本模式使用 `scripts/generate_chapter_with_llm.py`；它们会读取模型配置、打印进度、调用 LLM、校验 JSON、写入目标文件。
+
+不要在脚本文档里写“需要手动调用 `/shanyin-write`”作为正常路径；自动化路径必须落到具体执行器。
 
 ### 第0步：初始化任务目录
 
@@ -200,13 +221,14 @@ echo "✅ 任务目录已创建: $TASK_DIR"
 
 ### 第1步：故事策划
 
-调用 `/shanyin-write` 生成故事大纲。此处使用 `cd-generator mode`：直接输出 JSON，不在 `/shanyin-write` 内暂停确认。
+调用 `/shanyin-write` 生成故事大纲。此处使用 `cd-generator mode`：先输出简短进度反馈，再生成纯 JSON 文件内容，不在 `/shanyin-write` 内暂停确认。
 
 **调用输入**：给 `/shanyin-write` 的故事策划输入必须包含：
 - `story_theme`、`genre`、`language_level`、`total_chapters`、`pages_per_chapter`、`art_style`
 - Scene2Talk 口语练习定位：真实场景、可说出口的英语、每页有练习目标
 - 目标产物：`data/story_outline.json`
-- 输出约束：JSON only，不要 Markdown 解释，不暂停确认
+- 输出约束：最终写入 `data/story_outline.json` 的内容必须是纯 JSON，不要 Markdown 解释，不暂停确认
+- 进度反馈：必须先按 `/shanyin-write` 的 Progress Feedback Protocol 发送“已收到调用”状态，然后报告输入确认、角色/冲突、大纲弧线、JSON 校验等状态；反馈文本只在对话里出现，不得写入 JSON 文件
 
 **输出**：`$TASK_DIR/data/story_outline.json`
 
@@ -231,7 +253,42 @@ echo "✅ 任务目录已创建: $TASK_DIR"
 
 ### 第2步：逐章创作剧本
 
-为每一章调用 `/shanyin-write` 生成详细剧本。此处使用 `cd-generator mode`：每章直接输出结构化 JSON。
+为每一章调用 `/shanyin-write` 生成详细剧本。此处使用 `cd-generator mode`：每章先输出简短进度反馈，再生成结构化 JSON 文件内容。
+
+脚本模式不要手动“假调用 `/shanyin-write`”。使用真实执行器：
+
+```bash
+python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/generate_chapter_with_llm.py "$TASK_DIR" \
+  --chapter 1 \
+  --chunk-size 2
+```
+
+默认按 `page_beats` 数量生成页数，并每 2 页调用一次模型，降低整章生成时卡死或超时的概率。
+
+每章生成后必须立即做口语练习适配审查：
+
+```bash
+python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/audit_oral_practice_fit.py "$TASK_DIR" \
+  --chapters 1
+```
+
+审查重点：
+
+- 每页是否有明确 `speaking_goal`
+- 英文对白是否足够口语化，能朗读、跟读、复述或自由对话
+- 每页是否有 3 个以上可练对话动作：提问、澄清、确认理解、请求帮助、表达担心、建议、协商、总结或承诺
+- 是否旁白过多、长句过多、世界观解释过多
+
+如果审查报告出现 `error`，必须先修复再进入下一章；如果出现 `few_conversation_moves`、`english_line_too_long` 等 warning，优先修复后再继续批量生成。
+
+自动修复命令：
+
+```bash
+python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/repair_oral_practice_issues.py "$TASK_DIR" \
+  --chapters 1
+```
+
+修复器会读取 `quality/oral_practice_audit.json` 或即时审查结果，只重写有问题的页面，然后自动复跑口语适配审查。修复后 `error_count` 和 `warning_count` 都为 0，才算该章可进入分镜阶段。
 
 **调用输入**：给 `/shanyin-write` 的单章剧本输入必须包含：
 - 完整 `story_outline.json`
@@ -239,7 +296,8 @@ echo "✅ 任务目录已创建: $TASK_DIR"
 - 前一章结尾状态（如有）和下一章衔接目标（如有）
 - 每页需要服务口语练习：12-16 句短英文对白、自然反应、澄清、追问、修正、承诺等
 - 目标产物：`scripts/chapter{N}.json`
-- 输出约束：JSON only，不要 Markdown 解释，不暂停确认
+- 输出约束：最终写入 `scripts/chapter{N}.json` 的内容必须是纯 JSON，不要 Markdown 解释，不暂停确认
+- 进度反馈：必须先按 `/shanyin-write` 的 Progress Feedback Protocol 发送“已收到调用”状态，然后报告上下文读取、page beats 映射、每 2 页或 25%/50%/75%/100% 生成进度、JSON 校验等状态；反馈文本只在对话里出现，不得写入 JSON 文件
 
 **输出**：`$TASK_DIR/scripts/chapter{N}.json`
 
@@ -275,7 +333,7 @@ echo "✅ 任务目录已创建: $TASK_DIR"
 - 章节号、页号、场景地点、该页剧情目标
 - 本页英文对白和中文翻译
 - 前后页连续性提示（如角色位置、道具、情绪状态）
-- Scene2Talk 约束：16:9 横版背景、左/中/右或斜向分区、英文可见文字
+- Scene2Talk 约束：16:9 横版背景、左/中/右或斜向分区；如有对话气泡/字幕，画面可见文字必须使用中英双语配对
 
 **输出**：`$TASK_DIR/storyboards/chapter{N}_page{M}.json`
 
@@ -304,9 +362,11 @@ echo "✅ 任务目录已创建: $TASK_DIR"
 - `image_prompt` 必须明确写出：16:9 landscape / widescreen composition。
 - `image_prompt` 必须明确使用左/中/右三分区、非均匀横向分区，或斜向分区；不要使用 TOP/MIDDLE/BOTTOM 上下分区。
 - `image_prompt` 必须把人物、动作、对话气泡和重要道具分布在横向阅读路径中，避免挤在角落或贴近画面边缘，适配 Story-Test 的顶部信息、右侧漫画导航、提示面板和底部语音条。
-- 画面中应加入 1-3 个短英文 speech bubbles/captions，内容从该页英文对白中提炼，短、自然、可读；过场页至少加入一个英文 caption。
-- 画面内任何可见文字都必须 English only。提示词中要明确：no Chinese, no Japanese, no Korean, no pseudo text, no random glyphs, no unreadable text。
-- 不要把完整 12-16 句对白塞进图片，只放最能代表场景的 1-3 句短气泡；完整练习对白仍保存在 JSON 中。
+- `image_prompt` 必须明确 UI 安全区：avoid the top 12% of the image for speech bubbles, faces, and key text; keep a 6% left/right edge margin for bubbles, faces, and important props。
+- 气泡按可见场景分配：每个视觉场景最多 2 个中英双语 speech bubbles/captions，整张图最多 6 个；默认优先 1-3 个，只有多场景、群像或梦境蒙太奇页才允许接近 6 个。
+- 每个气泡必须短、自然、可读：英文尽量不超过 8 个词，中文尽量不超过 14 个字；英文在上、中文在下，例如 `"I must go. / 我必须去。"`；过场页至少加入一个中英双语 caption。
+- `image_prompt` 本身仍用英文书写给图片模型，但画面内对话气泡/字幕的可见文字必须是 Chinese + English bilingual paired text。不要写 English only；可继续明确 no Japanese, no Korean, no pseudo text, no random glyphs, no unreadable text。
+- 不要把完整 12-16 句对白塞进图片，只放最能代表场景、冲突或口语练习目标的短气泡；完整练习对白仍保存在 JSON 中。
 
 **每完成3个分镜报告一次**：
 ```
@@ -345,22 +405,53 @@ echo "✅ 任务目录已创建: $TASK_DIR"
 # 更新 progress.json 中的 prompts_saved 状态为 "completed"
 ```
 
-### 第5步：内容质检
+### 第5步：分层质检
 
-**重要**：图片生成前必须先跑内容质检。质检 `error` 为 0 才进入图片生成；`warning/info` 可以继续，但要在报告中说明。
+**重要**：图片生成前必须先过分层质检。不要默认跑全量语义深审；先做便宜、快速、确定性的检查，只在发现风险或准备最终交付时再跑深审。
 
-如果本次要交付 Story-Guided Free Talk，请先执行“第9步：生成对话任务”，再运行本步骤；这样质检可以同时检查 `missions/` 的结构和角色合理性。如果先做了内容质检，后来又生成 missions，需要重新运行本步骤。
+默认质检入口：
 
-内容质检需要模型语义审稿。模型配置统一放在 skill 本地配置文件：
+```bash
+python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/quality_gate.py "$TASK_DIR" \
+  --chapter 1
+```
+
+分层策略：
+
+1. **框架/结构层（本地轻量）**
+   - JSON 是否合法
+   - 章节、页码、对白数组是否存在
+   - storyboard 是否包含 `image_prompt` / `image_prompt_zh`
+2. **口语练习层（本地轻量）**
+   - 每页是否有 `speaking_goal`
+   - 英文是否短、可朗读、可跟读
+   - 每页是否有足够对话动作：提问、澄清、确认、请求帮助、表达担心、建议、承诺
+3. **分镜/图片提示词层（本地轻量）**
+   - 16:9 landscape / widescreen
+   - left/center/right 或 diagonal 构图
+   - English-only visible text
+   - prompt 长度和 speech bubble/caption 基本要求
+4. **语义深审层（模型重审，按需）**
+   - 只在轻量审查发现大量 warning/error、准备最终交付、或用户要求深审时运行
+   - 使用 `quality_gate.py --deep` 或 `--auto-deep`
+
+```bash
+# 只在有风险时自动深审
+python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/quality_gate.py "$TASK_DIR" \
+  --chapter 1 \
+  --auto-deep
+
+# 最终交付前全量深审
+python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/quality_gate.py "$TASK_DIR" \
+  --deep
+```
+
+模型深审配置统一放在 skill 本地配置文件：
 ```bash
 /Users/zhanghua/.claude/skills/cd-generator/config/llm.env
 ```
 
 该文件已加入 `.gitignore`，不要提交。脚本会自动读取其中的 `CD_GENERATOR_LLM_BASE_URL`、`CD_GENERATOR_LLM_MODEL`、`CD_GENERATOR_LLM_API_KEY`、`CD_GENERATOR_LLM_ENDPOINT_MODE`。
-
-```bash
-/Users/zhanghua/.claude/skills/cd-generator/scripts/validate_content.sh "$TASK_DIR"
-```
 
 **检查内容**：
 - 每页对话是否为 12-16 句
@@ -370,12 +461,14 @@ echo "✅ 任务目录已创建: $TASK_DIR"
 - 角色名是否与 `story.characters` 一致：由模型审稿 + 本地结构检查
 - A2/B1/B2 难度是否明显跑偏：由模型语义判断
 - 分镜是否同时包含英文 `image_prompt` 和中文 `image_prompt_zh`
-- 图片提示词是否符合 Scene2Talk 16:9 背景要求：中间 3/4 放关键人物和动作，上下 1/8 留安静安全区，画面内文字 English only，包含短英文漫画气泡/字幕
+- 图片提示词是否符合 Scene2Talk 16:9 背景要求：中间 3/4 放关键人物和动作，上下 1/8 留安静安全区；如果有对话气泡/字幕，画面内文字必须是中英双语配对，包含短的 bilingual 漫画气泡/字幕
 - 如果已生成 `missions/`：检查 Story-Guided 角色、结构化 beats、target phrases 是否合理
 
 **输出**：
-- `$TASK_DIR/quality/content_quality_report.md`
-- `$TASK_DIR/quality/content_quality_report.json`
+- `$TASK_DIR/quality/quality_gate_report.json`
+- 轻量口语审查：`$TASK_DIR/quality/oral_practice_audit.json`
+- 轻量分镜审查：`$TASK_DIR/quality/storyboard_audit.json`
+- 深审报告（仅 deep 时）：`$TASK_DIR/quality/content_quality_report.md/json`
 
 **完成后报告**：
 ```
@@ -383,8 +476,8 @@ echo "✅ 任务目录已创建: $TASK_DIR"
    - 结果：通过 / 未通过
    - error：{error_count}
    - warning：{warning_count}
-   - info：{info_count}
-   - 报告：$TASK_DIR/quality/content_quality_report.md
+   - 深审：跳过 / 已运行
+   - 报告：$TASK_DIR/quality/quality_gate_report.json
 ```
 
 **更新进度**：
@@ -399,14 +492,29 @@ echo "✅ 任务目录已创建: $TASK_DIR"
 
 使用智能图片生成管理器，一键完成提交、监控、下载全流程。图片生成只读取 `$TASK_DIR/prompts/` 中的英文提示词，不使用中文提示词。
 
+架构边界：
+
+- `cd-generator/scripts/smart_image_manager.sh`：批量、质检、节流、重试上限、任务状态、`image_links.json`。
+- `chatgpt-image/scripts/opencli_image_service.py`：单张图的 OpenCLI `submit/status/download/generate`。
+- 其它脚本如 `generate_images.sh`、`check_images.sh`、`check_and_download.sh`、`download_chatgpt_images.py` 是兼容入口，也必须走 `chatgpt-image` 服务。
+
 ```bash
 /Users/zhanghua/.claude/skills/cd-generator/scripts/smart_image_manager.sh "$TASK_DIR"
 ```
 
+脚本最终会自动同步状态并运行图片文件审查，输出：
+
+- `$TASK_DIR/quality/image_audit.json`
+- `$TASK_DIR/image_generation.log`
+- `$TASK_DIR/image_links.json`
+
+图片审查只做文件级质量门：是否缺图、是否有效 PNG、尺寸/比例是否接近 16:9、`image_links.json` 状态是否需要同步。它不替代人工视觉审查；第一张测试图仍需人工查看气泡可读性、UI 安全区和角色稳定性。
+
 **OpenCLI 稳定性策略（必须遵守）**：
 
 - 大批量生成前，先提交 1 张验证链路；第 1 张拿不到 `https://chatgpt.com/...` 链接时，不要继续提交整批。
-- OpenCLI 可能被 Chrome 扩展页挡住，典型错误是 `Cannot access a chrome-extension:// URL of different extension`、`Detached while handling command`、`attach failed`。脚本会自动执行 `opencli browser close` + `opencli doctor` 后重试。
+- 单图测试必须使用 ChatGPT Image skill 的服务或 `run.sh`，通过后把图片放到 `$TASK_DIR/images/chapter{N}_page{M}.png`，再运行 `audit_generated_images.py` 或 `quality_gate.py --images`。
+- OpenCLI 可能被 Chrome 扩展页挡住，典型错误是 `Cannot access a chrome-extension:// URL of different extension`、`Detached while handling command`、`attach failed`。`chatgpt-image` 服务会自动执行 `opencli browser close` + `opencli doctor` 后重试。
 - 如果输出里已经有 ChatGPT 链接，即使同时混入 `Detached while handling command` 或非 0 exit code，也先按“已提交 pending”记录；后续监控/下载阶段再确认图片是否真正生成。
 - 连续 3 张提交失败时停止批量提交，先检查 `$TASK_DIR/image_generation.log` 和 `$TASK_DIR/image_generation_pageN_submit.log`，避免刷出 24 个无效失败。
 - 下载时只认本次下载开始后的 PNG 文件，避免误把 `~/Downloads` 里的旧图当成当前页图片。
@@ -433,7 +541,7 @@ echo "✅ 任务目录已创建: $TASK_DIR"
 
 图片生成支持两种模式，通过 `config/youmind.env` 中的 `YKM_DIRECT_API_MODE` 控制：
 
-1. **OpenCLI 模式**（默认）：使用浏览器自动化调用 ChatGPT Image 2
+1. **OpenCLI 模式**（默认）：通过 `chatgpt-image` 服务使用浏览器自动化调用 ChatGPT Image 2
    - 需要登录 ChatGPT 网页版
    - 异步生成，需要监控循环
    - 适合有 ChatGPT Plus 订阅的用户
@@ -598,14 +706,17 @@ vim "$TASK_DIR/prompts/chapterX_pageY.txt"
 3. **手动重新提交**：
 ```bash
 prompt=$(cat "$TASK_DIR/prompts/chapterX_pageY.txt")
-opencli chatgpt image "$prompt" --verbose
-# 记录新的链接，等待1分钟后检查
+python3 /Users/zhanghua/.claude/skills/chatgpt-image/scripts/opencli_image_service.py submit \
+  --prompt "$prompt" \
+  --repair-retries 2
+# 将返回 JSON 中的 link 记录到 image_links.json，等待后再检查
 ```
 
 如果是 OpenCLI 浏览器挂接问题，先执行：
 ```bash
-opencli browser close
-opencli doctor
+python3 /Users/zhanghua/.claude/skills/chatgpt-image/scripts/opencli_image_service.py status \
+  --link "$CHATGPT_LINK" \
+  --repair-retries 1
 ```
 
 **YouMind API 模式**：
@@ -626,13 +737,12 @@ python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/youmind_image_client
 
 ### 第7.5步：批量下载已生成的图片（OpenCLI 模式）
 
-**重要**：OpenCLI 模式下，图片提交后不会自动下载。需要使用专用脚本从 ChatGPT 对话页面提取并下载图片。
+**重要**：OpenCLI 模式下，图片提交后需要轮询和下载。默认由 `smart_image_manager.sh` 自动完成；如果只想单独补下载，使用下面的兼容脚本。
 
 **下载原理**：
 1. 逐个打开 `image_links.json` 中的 ChatGPT 对话链接
-2. 用 `opencli browser eval` 执行 JS，从页面中查找 `img[alt="Generated image"]` 或 `img[src*="estuary/content"]`
-3. 用 JS `fetch()` 下载图片 blob，触发浏览器下载到 `~/Downloads/`
-4. 将下载的文件移动到 `$TASK_DIR/images/` 目录
+2. 调用 `chatgpt-image/scripts/opencli_image_service.py status` 检查图片是否 ready
+3. 调用 `chatgpt-image/scripts/opencli_image_service.py download` 下载并保存到 `$TASK_DIR/images/`
 
 **使用方法**：
 ```bash
@@ -645,13 +755,13 @@ python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/download_chatgpt_ima
 
 **只下载指定章节**：
 ```bash
-# 修改脚本中的过滤条件，例如只下载第1-2章
-images = [i for i in data.get('images', []) if i.get('chapter') in [1, 2]]
+python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/download_chatgpt_images.py "$TASK_DIR" "$IMAGES_DIR" \
+  --chapters 1,2
 ```
 
 **注意事项**：
-- 需要先登录 ChatGPT 网页版（通过 `opencli browser` 自动化窗口）
-- 每张图片需要约 10 秒（打开页面 6 秒 + JS 执行 3 秒 + 下载 1 秒）
+- 需要先登录 ChatGPT 网页版（通过 OpenCLI 自动化窗口）
+- 每张图片需要约 10 秒左右，具体由 `chatgpt-image` 服务的状态检查和下载耗时决定
 - 96 张图片约需 15-20 分钟
 - 部分图片可能显示"未生成"，需要稍后重新运行脚本
 - 建议多次运行脚本，直到所有已生成的图片都下载完成
@@ -893,7 +1003,7 @@ python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/generate_story_guide
 
 ✅ **简洁清晰**：
 ```
-16:9 widescreen manga scene with three vertical zones. LEFT 25%: modern office entrance with morning light and a nervous young designer holding a tote bag. CENTER 55%: the designer and mentor shake hands beside a reception desk, friendly eye contact and one short English speech bubble, "Welcome aboard." RIGHT 20%: close-up of the handshake and a badge on the desk. Modern manga style, bright professional atmosphere, all visible text English only.
+16:9 widescreen manga scene with three vertical zones. LEFT 25%: modern office entrance with morning light and a nervous young designer holding a tote bag. CENTER 55%: the designer and mentor shake hands beside a reception desk, friendly eye contact and one short bilingual Chinese + English speech bubble, "Welcome aboard. / 欢迎加入。" RIGHT 20%: close-up of the handshake and a badge on the desk. Modern manga style, bright professional atmosphere, readable bilingual dialogue text, no pseudo text.
 ```
 
 ✅ **结构化**：明确使用 LEFT/CENTER/RIGHT 或 diagonal zones，适合 16:9 横版背景
@@ -926,7 +1036,7 @@ dejection → enlightenment → triumph (一张图里包含太多情绪变化)
 
 **优化后（成功）**：
 ```
-16:9 widescreen manga scene with a diagonal split from lower-left to upper-right. LEFT 30%: young designer at a desk, one rough logo sketch and a crossed-out note. CENTER 50%: mentor points calmly at the screen while the designer revises the logo, focused expressions and one short English speech bubble, "Let's simplify it." RIGHT 20%: close-up of the cleaner logo version on the monitor. Modern manga style, clean composition, all visible text English only.
+16:9 widescreen manga scene with a diagonal split from lower-left to upper-right. LEFT 30%: young designer at a desk, one rough logo sketch and a crossed-out note. CENTER 50%: mentor points calmly at the screen while the designer revises the logo, focused expressions and one short bilingual Chinese + English speech bubble, "Let's simplify it. / 我们简化一下。" RIGHT 20%: close-up of the cleaner logo version on the monitor. Modern manga style, clean composition, readable bilingual dialogue text, no pseudo text.
 ```
 
 **改进点**：
@@ -1085,50 +1195,44 @@ dejection → enlightenment → triumph (一张图里包含太多情绪变化)
 
 ---
 
-**版本**：v2.9.0
+**版本**：v2.10.0
 **更新日期**：2026-05-01
 **主要改进**：
-- **新增批量生成和评分功能**
+- **新增阶段二：故事脉络和角色设定**
+  - 新增 `scripts/generate_story_arc_and_cards.py`：生成故事脉络和角色卡片
+  - 在批量筛选后、详细剧本前，先生成完整的故事框架
+  - 故事脉络：8个章节的核心事件、转折点、情感基调
+  - 角色卡片：角色名称、描述、阵营分类、视觉描述
+  - 支持生成角色头像提示词和图片
+- **优化工作流程为三个阶段**
+  - 阶段一：批量大纲生成和评分（快速筛选）
+  - 阶段二：故事脉络和角色设定（确定核心框架）
+  - 阶段三：完整内容生成（详细剧本+分镜+图片）
+- **更新文件组织结构**
+  - 新增 `data/story_arc.json`：故事脉络
+  - 新增 `data/character_cards.json`：角色卡片数据
+  - 新增 `character_prompts/`：角色头像提示词
+  - 新增 `character_images/`：角色头像图片（可选）
+- **新增批量生成和评分功能**（v2.9.0）
   - 新增 `scripts/score_story_outline.py`：使用 LLM 对故事大纲进行多维度评分
   - 新增 `scripts/batch_generate_outlines.sh`：批量生成多个故事大纲变体
   - 新增 `BATCH_SCORING.md`：批量生成和评分功能文档
   - 支持生成10个剧本变体，评分后选择最佳的1-2个继续开发
-- **理清图片生成架构**
-  - 明确 cd-generator 使用自己的 `smart_image_manager.sh`
-  - `/chatgpt-image` skill 仅用于单图请求，不参与批处理
-  - 更新依赖 Skills 说明，移除对 `/chatgpt-image` 的调用
-- **评分维度**（每项0-10分）
-  - 故事吸引力、角色设定、冲突设计
-  - 口语练习适配度、情感曲线
-  - 职场真实性、创意新颖度
-- **对齐 shanyin-write 接口**
-  - 明确 `/shanyin-write` 在 `cd-generator Mode` 下的故事策划和单章剧本输入字段
-  - 强化 JSON-only、不暂停确认和 Scene2Talk 口语练习输出约束
-- **对齐 shanyin-direct 接口**
-  - 明确 `/shanyin-direct` 在 `cd-generator Mode` 下的输入字段和输出 JSON
-  - 统一分镜为 16:9 横版 left/center/right 或 diagonal zones
-  - 移除旧的竖版 `TOP/MIDDLE/BOTTOM` 和 top/bottom safe-band 强约束
-- **完成历史错放数据清理**
-  - 确认 `20260429_235435_bakery_adventure` 已保留在 skill 正确输出目录
-  - 旧项目 worktree 副本已移出原路径，项目侧只保留迁移说明
-- **修复输出目录污染**
-  - 新增 `scripts/task_path_guard.py`，统一规范 `TASK_DIR`
-  - 主要脚本在写入前都会拒绝 Sense Talk 项目/worktree 下的 `cd_generator_output`
-  - 相对路径 `cd_generator_output/<task>` 会映射到 `/Users/zhanghua/.claude/skills/cd-generator/output/<task>`
-- **版本与主项目解耦**
-  - 新增 `skill-version.json` 作为 `cd-generator` 的机器可读版本源
-  - 明确本 skill 版本不等于 Sense Talk / Scene2Talk 主项目 `package.json` 版本
-  - 整理本 skill 的 `.gitignore`，忽略本地任务输出、日志、密钥和缓存，避免生成产物混入技能版本
+- **理清图片生成架构**（v2.11.0）
+  - `chatgpt-image` 是独立可复用单图/OpenCLI 服务
+  - `cd-generator` 负责批量编排和任务状态，每张图调用 `chatgpt-image/scripts/opencli_image_service.py`
+  - 移除 `cd-generator` 内重复 OpenCLI 生图实现，保留兼容入口但统一走服务
 
 **历史版本**：
+- v2.9.0: 批量生成和评分功能
 - v2.8.4: 对齐 shanyin-write 和 shanyin-direct 接口
 - v2.8.3: 对齐 shanyin-direct 的 16:9 横版 storyboard JSON 契约
-- v2.8.2: 清理历史错放数据副本，确认项目侧只保留迁移说明
-- v2.8.1: 增加 TASK_DIR 路径护栏，阻止生成数据写入 Sense Talk 项目 worktree
-- v2.8.0: 增加 skill 独立版本源和版本边界，避免与 Sense Talk 主项目版本混用
-- v2.7: 增加第7.5步批量下载已生成图片，支持 OpenCLI 模式下从 ChatGPT 对话链接提取并下载图片
-- v2.5: 增加 YouMind API 图片生成模式、HTML 预览、Story-Guided 详细报告
-- v2.4: 分离数据准备和图片生成、Story-Guided Free Talk 支持、内容质检
+- v2.8.2: 清理历史错放数据副本
+- v2.8.1: 增加 TASK_DIR 路径护栏
+- v2.8.0: 版本与主项目解耦
+- v2.7: 批量下载已生成图片
+- v2.5: YouMind API 图片生成模式、HTML 预览
+- v2.4: Story-Guided Free Talk 支持、内容质检
 - v2.3: 基础漫剧生成功能
 
 ## Story-Guided Free Talk 系统

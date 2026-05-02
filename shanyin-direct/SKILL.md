@@ -38,7 +38,7 @@ Expected input from `cd-generator`:
 - chapter number, page number, scene location, and page-level speaking goal
 - English dialogue and Chinese translation for the page
 - continuity notes from adjacent pages when available
-- Scene2Talk constraints: 16:9 widescreen background, left/center/right or diagonal zoning, English-only visible text
+- Scene2Talk constraints: 16:9 widescreen background, left/center/right or diagonal zoning, bilingual Chinese+English speech bubbles/captions when visible text appears
 
 Required output shape:
 
@@ -65,8 +65,10 @@ Required output shape:
 
 - `image_prompt` must be English and is the only field used for image generation.
 - `image_prompt_zh` must be Chinese and must describe the same scene for HTML preview and human review.
+- If the image includes speech bubbles, captions, signs, or readable text for dialogue practice, visible text must be bilingual Chinese + English. Allocate bubbles by visible scene: max 2 bilingual bubbles/captions per visual scene, max 6 for the whole image, default 1-3. Only multi-scene, ensemble, or dream-montage pages should approach 6. Keep each bubble short and readable, ideally English <= 8 words and Chinese <= 14 characters, with English above Chinese, such as `"I must go. / 我必须去。"`. Do not use English-only dialogue bubbles for Scene2Talk practice pages.
 - Default to 16:9 landscape / widescreen composition for Scene2Talk backgrounds.
 - Prefer left / center / right zones or diagonal zones. Avoid top / middle / bottom layouts unless the caller explicitly asks for vertical comic panels.
+- UI safety is mandatory for Scene2Talk: avoid the top 12% of the image for speech bubbles, faces, and key readable text; keep a 6% left/right edge margin for bubbles, faces, and important props.
 - Describe visible subjects, actions, setting, lighting, mood, and spatial relationships. Do not describe invisible psychology.
 - Avoid overloaded effects, dense props, too many characters, and multi-step emotional transformations in one image.
 - Preserve character visual continuity from the story outline.

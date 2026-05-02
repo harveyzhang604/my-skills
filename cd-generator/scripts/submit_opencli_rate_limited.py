@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Submit cd-generator prompts to OpenCLI at a fixed interval."""
+"""Submit cd-generator prompts to chatgpt-image service at a fixed interval."""
 
 import argparse
 import json
-import re
 import subprocess
 import sys
 import time
@@ -11,6 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from task_path_guard import require_task_dir
+
+CHATGPT_IMAGE_SERVICE = Path("/Users/zhanghua/.claude/skills/chatgpt-image/scripts/opencli_image_service.py")
 
 
 def now_iso():
@@ -27,115 +28,45 @@ def save_json(path, data):
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def parse_link(output):
-    output = re.sub(r"\x1b\[[0-9;]*m", "", output or "")
-    patterns = [
-        r"link:\s*🔗?\s*(https://chatgpt\.com/[^\s<>'\"]+)",
-        r"(https://chatgpt\.com/[^\s<>'\"]+)",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, output)
-        if match:
-            return match.group(1).strip().rstrip(").,;]}>\"'")
-    return ""
-
-
-def is_browser_attach_error(output):
-    lowered = output.lower()
-    return (
-        "cannot access a chrome-extension:// url of different extension" in lowered
-        or "detached while handling command" in lowered
-        or "attach failed" in lowered
-    )
-
-
-def repair_opencli_browser():
-    subprocess.run(
-        ["opencli", "browser", "close"],
-        text=True,
-        capture_output=True,
-    )
-    subprocess.run(
-        ["opencli", "doctor"],
-        text=True,
-        capture_output=True,
-    )
-    time.sleep(5)
-
-
 def output_tail(output, limit=2000):
     return (output or "")[-limit:]
 
 
-def classify_opencli_output(output, exit_code):
-    link = parse_link(output)
-    attach_error = is_browser_attach_error(output)
-    warnings = []
-
-    if link:
-        if exit_code != 0:
-            warnings.append(f"opencli exited with {exit_code}, but a ChatGPT link was found")
-        if attach_error:
-            warnings.append("OpenCLI reported a browser attach warning after link creation")
-        return {
-            "status": "pending",
-            "link": link,
-            "retryable": False,
-            "warning": "; ".join(warnings),
-            "last_error": "",
-        }
-
-    if attach_error:
-        return {
+def call_chatgpt_image_submit(prompt, repair_retries=2):
+    if not CHATGPT_IMAGE_SERVICE.exists():
+        raise RuntimeError(f"missing chatgpt-image service: {CHATGPT_IMAGE_SERVICE}")
+    proc = subprocess.run(
+        [
+            sys.executable,
+            str(CHATGPT_IMAGE_SERVICE),
+            "submit",
+            "--prompt",
+            prompt,
+            "--repair-retries",
+            str(repair_retries),
+        ],
+        text=True,
+        capture_output=True,
+    )
+    output = (proc.stdout or "") + (proc.stderr or "")
+    try:
+        payload = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        payload = {
+            "ok": False,
             "status": "submit_failed",
             "link": "",
-            "retryable": True,
-            "warning": "",
-            "last_error": "OpenCLI browser attach error; no ChatGPT link found",
+            "error": "chatgpt-image service returned non-JSON output",
+            "submit_exit_code": proc.returncode,
+            "submit_attempts": 1,
+            "opencli_repaired": False,
         }
-
-    if exit_code != 0:
-        return {
-            "status": "submit_failed",
-            "link": "",
-            "retryable": False,
-            "warning": "",
-            "last_error": f"OpenCLI exited with {exit_code}; no ChatGPT link found",
-        }
-
-    return {
-        "status": "submit_failed",
-        "link": "",
-        "retryable": False,
-        "warning": "",
-        "last_error": "OpenCLI returned successfully but no ChatGPT link was found",
-    }
-
-
-def run_opencli_image(prompt, repair_retries=2):
-    attempts = []
-    repaired = False
-    max_attempts = max(1, repair_retries + 1)
-    for attempt in range(max_attempts):
-        proc = subprocess.run(
-            ["opencli", "chatgpt", "image", prompt, "--verbose"],
-            text=True,
-            capture_output=True,
-        )
-        output = (proc.stdout or "") + (proc.stderr or "")
-        attempts.append((proc.returncode, output))
-        classification = classify_opencli_output(output, proc.returncode)
-        if classification["link"] or not classification["retryable"] or attempt == max_attempts - 1:
-            break
-        repaired = True
-        repair_opencli_browser()
-    exit_code, output = attempts[-1]
-    if len(attempts) > 1:
-        combined = []
-        for idx, (code, text) in enumerate(attempts, start=1):
-            combined.append(f"===== attempt {idx} exit={code} =====\n{text}")
-        output = "\n".join(combined)
-    return exit_code, output, len(attempts), repaired
+    payload.setdefault("submit_exit_code", proc.returncode)
+    payload.setdefault("submit_attempts", 1)
+    payload.setdefault("opencli_repaired", False)
+    payload["_service_output"] = output
+    payload["_service_returncode"] = proc.returncode
+    return payload
 
 
 def existing_record(data, chapter, page):
@@ -203,11 +134,11 @@ def submit_prompt(task_dir, page, force=False, repair_retries=2):
 
     log_path = task_dir / f"image_generation_page{page}_submit.log"
     started_at = now_iso()
-    exit_code, output, attempts, repaired = run_opencli_image(prompt, repair_retries=repair_retries)
+    service_result = call_chatgpt_image_submit(prompt, repair_retries=repair_retries)
+    output = service_result.get("_service_output", "")
     log_path.write_text(output, encoding="utf-8", errors="replace")
-    classification = classify_opencli_output(output, exit_code)
-    link = classification["link"]
-    status = classification["status"]
+    link = service_result.get("link", "")
+    status = service_result.get("status") or ("pending" if link else "submit_failed")
     record = {
         "chapter": chapter,
         "page": page,
@@ -217,13 +148,13 @@ def submit_prompt(task_dir, page, force=False, repair_retries=2):
         "status": status,
         "retry_count": 0,
         "submitted_at": started_at,
-        "generation_mode": "opencli_rate_limited_120s",
-        "submit_exit_code": exit_code,
-        "submit_attempts": attempts,
+        "generation_mode": "chatgpt_image_service_opencli_rate_limited",
+        "submit_exit_code": int(service_result.get("submit_exit_code") or service_result.get("_service_returncode") or 0),
+        "submit_attempts": int(service_result.get("submit_attempts") or 1),
         "submit_log": log_path.name,
-        "submit_warning": classification["warning"],
-        "opencli_repaired": repaired,
-        "last_submit_error": classification["last_error"],
+        "submit_warning": service_result.get("warning", ""),
+        "opencli_repaired": bool(service_result.get("opencli_repaired")),
+        "last_submit_error": service_result.get("error", ""),
         "submit_output_tail": output_tail(output),
         "updated_at": now_iso(),
     }
@@ -235,11 +166,11 @@ def submit_prompt(task_dir, page, force=False, repair_retries=2):
         "page": page,
         "status": status,
         "link": link,
-        "exit_code": exit_code,
-        "attempts": attempts,
-        "warning": classification["warning"],
-        "opencli_repaired": repaired,
-        "error": classification["last_error"],
+        "exit_code": record["submit_exit_code"],
+        "attempts": record["submit_attempts"],
+        "warning": record["submit_warning"],
+        "opencli_repaired": record["opencli_repaired"],
+        "error": record["last_submit_error"],
     }
 
 
@@ -254,7 +185,7 @@ def update_progress(task_dir, submitted, total, status):
         "submitted_or_existing": submitted,
         "total": total,
         "interval_seconds": 120,
-        "mode": "opencli_rate_limited",
+        "mode": "chatgpt_image_service_opencli_rate_limited",
         "updated_at": now_iso(),
     }
     save_json(progress_path, progress)

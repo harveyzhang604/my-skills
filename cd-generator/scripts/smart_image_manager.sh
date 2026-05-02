@@ -3,7 +3,7 @@
 # 智能图片生成管理器
 # 功能：提交请求 → 自动监控 → 失败重试 → 完成通知
 # 支持两种模式：
-#   1. opencli (默认): 使用浏览器自动化调用 ChatGPT Image 2
+#   1. opencli (默认): 通过 chatgpt-image skill 的 OpenCLI 服务生成图片
 #   2. youmind: 使用 YouMind API 直接生成图片
 # 通过 config/youmind.env 中的 YKM_DIRECT_API_MODE 控制
 
@@ -16,6 +16,7 @@ CHECK_INTERVAL=60  # 1分钟检查一次
 MAX_WAIT_TIME=1200  # 20分钟超时
 SYNC_SCRIPT="/Users/zhanghua/.claude/skills/cd-generator/scripts/sync_task_status.sh"
 SCRIPT_DIR="/Users/zhanghua/.claude/skills/cd-generator/scripts"
+CHATGPT_IMAGE_SERVICE="/Users/zhanghua/.claude/skills/chatgpt-image/scripts/opencli_image_service.py"
 
 # 检测图片生成模式
 # 读取 youmind.env 配置
@@ -58,34 +59,26 @@ sync_task_status() {
     fi
 }
 
-is_browser_attach_error() {
-    local output="$1"
-    echo "$output" | grep -Eqi "Cannot access a chrome-extension:// URL of different extension|Detached while handling command|attach failed"
+audit_generated_images() {
+    local audit_script="$SCRIPT_DIR/audit_generated_images.py"
+    if [ -f "$audit_script" ]; then
+        log "🔎 运行图片文件审查..."
+        python3 "$audit_script" "$TASK_DIR" 2>&1 | tee -a "$LOG_FILE" || true
+        log "📄 图片审查报告: $TASK_DIR/quality/image_audit.json"
+    fi
 }
 
-repair_opencli_browser() {
-    log "   🔧 OpenCLI 浏览器会话异常，重启自动化窗口并检查 doctor"
-    opencli browser close 2>&1 > /dev/null || true
-    opencli doctor 2>&1 > /dev/null || true
-    sleep 5
-}
-
-parse_opencli_link() {
-    python3 << 'PYEOF'
-import re
-import sys
-
-text = re.sub(r"\x1b\[[0-9;]*m", "", sys.stdin.read())
-patterns = [
-    r"link:\s*🔗?\s*(https://chatgpt\.com/[^\s<>'\"]+)",
-    r"(https://chatgpt\.com/[^\s<>'\"]+)",
-]
-for pattern in patterns:
-    match = re.search(pattern, text)
-    if match:
-        print(match.group(1).strip().rstrip(").,;]}>\"'"))
-        break
-PYEOF
+audit_storyboard_prompts() {
+    local audit_script="$SCRIPT_DIR/audit_storyboards.py"
+    if [ -f "$audit_script" ]; then
+        log "🔎 运行分镜/图片提示词提交前审查..."
+        if ! python3 "$audit_script" "$TASK_DIR" 2>&1 | tee -a "$LOG_FILE"; then
+            log "🛑 分镜/图片提示词审查未通过，停止 OpenCLI 批量提交。请先修复 quality/storyboard_audit.json。"
+            return 1
+        fi
+        log "✅ 分镜/图片提示词提交前审查通过"
+    fi
+    return 0
 }
 
 image_file_exists() {
@@ -245,7 +238,7 @@ EOF
     fi
 }
 
-# 使用 opencli 提交图片生成请求 (浏览器模式)
+# 使用 chatgpt-image skill 提交图片生成请求 (OpenCLI 浏览器模式)
 submit_image_request_opencli() {
     local chapter=$1
     local page=$2
@@ -263,42 +256,51 @@ submit_image_request_opencli() {
     log "📤 [OpenCLI] 提交: 第${chapter}章第${page}页 (尝试 $((retry_count + 1)))"
 
     : > "$submit_log"
-    for attempt in 1 2 3; do
-        set +e
-        result=$(opencli chatgpt image "$prompt" --verbose 2>&1)
-        exit_code=$?
-        set -e
+    set +e
+    result=$(python3 "$CHATGPT_IMAGE_SERVICE" submit --prompt "$prompt" --repair-retries 2 2>&1)
+    exit_code=$?
+    set -e
+    echo "$result" >> "$submit_log"
 
-        {
-            echo "===== attempt $attempt exit=$exit_code ====="
-            echo "$result"
-        } >> "$submit_log"
-        combined_result="${combined_result}
-===== attempt $attempt exit=$exit_code =====
-$result"
+    parsed=$(SERVICE_RESULT="$result" python3 << 'PYEOF'
+import json
+import os
+import shlex
 
-        link=$(printf '%s' "$result" | parse_opencli_link)
+raw = os.environ["SERVICE_RESULT"]
+try:
+    data = json.loads(raw)
+except json.JSONDecodeError:
+    data = {"link": "", "warning": "", "submit_exit_code": "", "submit_attempts": 1, "opencli_repaired": False, "error": "chatgpt-image service returned non-JSON output"}
+else:
+    pass
 
-        # OpenCLI 有时已经创建了会话链接，但 stderr 又混入 Detached。
-        # 这种情况下以链接为准，后续监控阶段会继续确认图片是否生成。
-        if [ -n "$link" ]; then
-            if [ $exit_code -ne 0 ] || is_browser_attach_error "$result"; then
-                submit_warning="OpenCLI returned a warning/non-zero exit after creating a ChatGPT link"
-            fi
-            break
-        fi
-
-        if [ $exit_code -ne 0 ] && is_browser_attach_error "$result" && [ $attempt -lt 3 ]; then
-            opencli_repaired="true"
-            repair_opencli_browser
-            continue
-        fi
-
-        break
-    done
+fields = {
+    "link": data.get("link", ""),
+    "submit_warning": data.get("warning", ""),
+    "submit_exit_code": data.get("submit_exit_code", ""),
+    "attempt": data.get("submit_attempts", 1),
+    "opencli_repaired": "true" if data.get("opencli_repaired") else "false",
+    "service_error": data.get("error", ""),
+}
+for name, value in fields.items():
+    print(f"{name}={shlex.quote(str(value))}")
+PYEOF
+)
+    eval "$parsed"
+    combined_result="$result"
+    if [ -z "$submit_exit_code" ]; then
+        submit_exit_code="$exit_code"
+    fi
+    if [ -z "$attempt" ] || [ "$attempt" = "0" ]; then
+        attempt=1
+    fi
 
     if [ -z "$link" ]; then
         log "❌ [OpenCLI] 提交失败，未解析到 ChatGPT 链接；详见 $submit_log"
+        if [ -n "$service_error" ]; then
+            log "   错误: $service_error"
+        fi
         return 1
     fi
 
@@ -313,7 +315,7 @@ PAGE="$page" \
 PROMPT_TEXT="$prompt" \
 LINK="$link" \
 RETRY_COUNT="$retry_count" \
-SUBMIT_EXIT_CODE="$exit_code" \
+SUBMIT_EXIT_CODE="$submit_exit_code" \
 SUBMIT_ATTEMPTS="$attempt" \
 SUBMIT_LOG_NAME="$(basename "$submit_log")" \
 SUBMIT_WARNING="$submit_warning" \
@@ -352,7 +354,7 @@ image_data = {
     "retry_count": int(os.environ["RETRY_COUNT"]),
     "submitted_at": datetime.utcnow().isoformat() + "Z",
     "updated_at": datetime.utcnow().isoformat() + "Z",
-    "generation_mode": "opencli",
+    "generation_mode": "chatgpt_image_service_opencli",
     "submit_exit_code": int(os.environ["SUBMIT_EXIT_CODE"]),
     "submit_attempts": int(os.environ["SUBMIT_ATTEMPTS"]),
     "submit_log": os.environ["SUBMIT_LOG_NAME"],
@@ -402,163 +404,51 @@ submit_image_request() {
 # 检查单个图片状态
 check_image_status() {
     local link="$1"
-    local chapter=$2
-    local page=$3
-    local open_result
     local status
+    local result
 
-    for attempt in 1 2; do
-        # 打开页面
-        set +e
-        open_result=$(opencli browser open "$link" 2>&1)
-        open_code=$?
-        set -e
-        if [ $open_code -ne 0 ]; then
-            if [ $attempt -eq 1 ] && is_browser_attach_error "$open_result"; then
-                repair_opencli_browser
-                continue
-            fi
-            echo "PENDING"
-            return 0
-        fi
-        sleep 5
+    set +e
+    result=$(python3 "$CHATGPT_IMAGE_SERVICE" status --link "$link" --repair-retries 1 2>&1)
+    set -e
+    status=$(SERVICE_RESULT="$result" python3 << 'PYEOF'
+import json
+import os
 
-        # 检查状态
-        set +e
-        status=$(opencli browser eval "
-(() => {
-  const bodyText = document.body.innerText;
-
-  // 检查错误
-  if (bodyText.includes('I was unable to generate') ||
-      bodyText.includes('encountered an error') ||
-      bodyText.includes('抱歉')) {
-    return 'ERROR';
-  }
-
-  // 检查图片
-  let img = document.querySelector('img[src*=\"chatgpt.com/backend-api/\"]');
-  if (!img) img = document.querySelector('img[alt=\"Generated image\"]');
-
-  if (img && img.complete && img.naturalWidth > 0) {
-    return 'READY:' + img.naturalWidth + 'x' + img.naturalHeight;
-  }
-
-  return 'PENDING';
-})()
-" 2>&1)
-        eval_code=$?
-        set -e
-        if [ $eval_code -ne 0 ] && [ $attempt -eq 1 ] && is_browser_attach_error "$status"; then
-            repair_opencli_browser
-            continue
-        fi
-        break
-    done
-
-    echo "$status"
+try:
+    data = json.loads(os.environ["SERVICE_RESULT"])
+    print(data.get("status") or "PENDING")
+except json.JSONDecodeError:
+    print("PENDING")
+PYEOF
+)
+    echo "${status:-PENDING}"
 }
 
 # 下载图片
 download_image() {
     local link="$1"
     local filename="$2"
-    local download_started_at
-    local open_result
-    local eval_result
-    download_started_at=$(date +%s)
+    local result
+    local ok
 
     set +e
-    open_result=$(opencli browser open "$link" 2>&1)
-    open_code=$?
+    result=$(python3 "$CHATGPT_IMAGE_SERVICE" download \
+        --link "$link" \
+        --output "$IMAGES_DIR/$filename" \
+        --repair-retries 1 2>&1)
     set -e
-    if [ $open_code -ne 0 ] && is_browser_attach_error "$open_result"; then
-        repair_opencli_browser
-        opencli browser open "$link" 2>&1 > /dev/null || return 1
-    elif [ $open_code -ne 0 ]; then
-        return 1
-    fi
-    sleep 3
-
-    set +e
-    eval_result=$(opencli browser eval "
-(async () => {
-  let img = document.querySelector('img[src*=\"chatgpt.com/backend-api/\"]');
-  if (!img) img = document.querySelector('img[alt=\"Generated image\"]');
-  if (!img) return 'No image';
-
-  const canvas = document.createElement('canvas');
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0);
-  const dataUrl = canvas.toDataURL('image/png');
-  const a = document.createElement('a');
-  a.href = dataUrl;
-  a.download = 'chatgpt_image.png';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  return 'Downloaded';
-})()
-" 2>&1)
-    eval_code=$?
-    set -e
-    if [ $eval_code -ne 0 ] && is_browser_attach_error "$eval_result"; then
-        repair_opencli_browser
-        opencli browser open "$link" 2>&1 > /dev/null || return 1
-        sleep 3
-        opencli browser eval "
-(async () => {
-  let img = document.querySelector('img[src*=\"chatgpt.com/backend-api/\"]');
-  if (!img) img = document.querySelector('img[alt=\"Generated image\"]');
-  if (!img) return 'No image';
-
-  const canvas = document.createElement('canvas');
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(img, 0, 0);
-  const dataUrl = canvas.toDataURL('image/png');
-  const a = document.createElement('a');
-  a.href = dataUrl;
-  a.download = 'chatgpt_image.png';
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  return 'Downloaded';
-})()
-" 2>&1 > /dev/null || return 1
-    elif [ $eval_code -ne 0 ]; then
-        return 1
-    fi
-
-    sleep 3
-
-    latest_download=$(DOWNLOAD_STARTED_AT="$download_started_at" python3 << 'PYEOF'
+    ok=$(SERVICE_RESULT="$result" python3 << 'PYEOF'
+import json
 import os
-from pathlib import Path
 
-started_at = float(os.environ["DOWNLOAD_STARTED_AT"])
-downloads = Path.home() / "Downloads"
-candidates = []
-for path in downloads.glob("*.png"):
-    try:
-        stat = path.stat()
-    except OSError:
-        continue
-    if stat.st_mtime >= started_at - 1:
-        candidates.append((stat.st_mtime, path))
-if candidates:
-    print(max(candidates)[1])
+try:
+    data = json.loads(os.environ["SERVICE_RESULT"])
+    print("1" if data.get("ok") and data.get("status") == "completed" else "0")
+except json.JSONDecodeError:
+    print("0")
 PYEOF
 )
-    if [ -n "$latest_download" ]; then
-        mv "$latest_download" "$IMAGES_DIR/$filename"
-        return 0
-    fi
-
-    return 1
+    [ "$ok" = "1" ]
 }
 
 # 主流程
@@ -570,6 +460,9 @@ main() {
 
     # 先同步已有文件，避免重复提交已经生成完成的图片
     sync_task_status
+
+    # OpenCLI 批量提交前先做本地结构审查，避免把旧 prompt 直接送去生成
+    audit_storyboard_prompts || return 1
 
     # 第一阶段：提交缺失请求
     log "━━━ 第一阶段：提交图片生成请求 ━━━"
@@ -803,6 +696,7 @@ EOF
     log "   📋 详细记录: $IMAGE_LINKS_FILE"
     log "   📝 日志文件: $LOG_FILE"
     sync_task_status
+    audit_generated_images
 
     if [ $failed_count -gt 0 ]; then
         log ""

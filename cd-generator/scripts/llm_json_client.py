@@ -90,8 +90,10 @@ Judge semantically whether the prompt is likely too complex, too abstract, too e
 - It should avoid TOP/MIDDLE/BOTTOM vertical-strip composition unless the caller explicitly requested a vertical comic panel.
 - Main characters, gestures, eye contact, props, and story action should be distributed along a horizontal reading path instead of clustered in one corner.
 - Important faces, speech bubbles, text, and actions should not be placed at extreme edges where UI may cover them.
-- If any visible text, caption, sign, UI, sticky note, or speech bubble appears, it must be English only.
-- A comic page should include 1-3 short English speech bubbles or captions. If the page is an establishing/transition shot, include at least one short English caption.
+- UI safety is mandatory: avoid the top 12% of the image for speech bubbles, faces, and key readable text; keep a 6% left/right edge margin for bubbles, faces, and important props.
+- If any visible dialogue text, caption, sign, UI, sticky note, or speech bubble appears for practice, it should be bilingual Chinese + English.
+- Allocate bubbles by visible scene: max 2 bilingual bubbles/captions per visual scene, max 6 for the whole image, default 1-3. Only multi-scene, ensemble, or dream-montage pages should approach 6.
+- Keep each bubble short and readable, ideally English <= 8 words and Chinese <= 14 characters, with English above Chinese. Use paired text such as "I must go. / 我必须去。".
 Do not rely on fixed banned words.""",
 
     "optimize_image_prompt": """You rewrite an English image generation prompt for a 16:9 comic-drama background image used behind a speaking-practice UI.
@@ -105,12 +107,14 @@ Rules:
 - Force a 16:9 landscape composition.
 - Use left/center/right vertical zones, non-even horizontal zoning, or a diagonal split. Do not use TOP/MIDDLE/BOTTOM vertical comic-panel structure for 16:9 backgrounds.
 - Keep important faces, readable text, speech bubbles, and story action away from extreme edges where UI may cover them.
+- Enforce UI safety: avoid the top 12% of the image for speech bubbles, faces, and key readable text; keep a 6% left/right edge margin for bubbles, faces, and important props.
 - Distribute people and activity across the widescreen frame instead of clustering everything in one corner; keep the composition readable for left/center/right UI use.
-- Add 1-3 short English-only speech bubbles or captions. If the scene is an establishing/transition shot, include at least one short English caption. Keep the text natural, brief, and easy to render.
-- If any visible text appears anywhere in the image, it must be English only. Explicitly forbid Chinese, Japanese, Korean, random glyphs, pseudo text, and unreadable text.
+- Allocate bilingual Chinese+English speech bubbles/captions by visible scene: max 2 per visual scene, max 6 for the whole image, default 1-3. Only multi-scene, ensemble, or dream-montage pages should approach 6.
+- If the scene is an establishing/transition shot, include at least one short bilingual caption. Keep each bubble natural, brief, and easy to render, ideally English <= 8 words and Chinese <= 14 characters, with English above Chinese.
+- If visible text appears anywhere in the image, dialogue/caption practice text should be paired Chinese + English, for example "I must go. / 我必须去。". For non-dialogue signs/UI, keep text minimal and readable.
 - Make it concrete, visual, and easy to render.
 - Remove abstract transformations, excessive effects, and clutter.
-- Output English only for optimized_prompt.""",
+- Write the optimized_prompt instructions in English. Bilingual speech-bubble examples may include Chinese characters because those are intended visible text in the image.""",
 
     "repair_json": """Repair the user's invalid JSON-like text into valid JSON.
 
@@ -130,11 +134,175 @@ Return JSON only with:
 Judge whether:
 - English image_prompt and Chinese image_prompt_zh describe the same scene.
 - image prompts match the page dialogue and emotional arc.
-- image prompts are suitable as 16:9 Scene2Talk backgrounds: left/center/right or diagonal zoning, no vertical TOP/MIDDLE/BOTTOM panel structure, edge-safe key action, and English-only visible text.
+- image prompts are suitable as 16:9 Scene2Talk backgrounds: left/center/right or diagonal zoning, no vertical TOP/MIDDLE/BOTTOM panel structure, edge-safe key action, and bilingual Chinese+English visible dialogue/caption text when text appears.
 - mission beats follow the page dialogue direction and support free speaking.
 - target phrases are useful for the learner role.
 
 Do not claim to visually inspect the final generated bitmap. You are auditing text alignment; the HTML report will show the actual image for human visual review.""",
+
+    "generic_scoring": """You are a professional story evaluator. Score the provided story outline based on the criteria in the prompt. Return valid JSON only with the requested score structure.""",
+
+    "generate_story_outline": """You are shanyin-write running in cd-generator Mode.
+
+Generate one Scene2Talk comic-drama story outline for English speaking practice.
+
+Return JSON only with this structure:
+{
+  "story": {
+    "title": string,
+    "title_en": string,
+    "genre": string,
+    "language_level": string,
+    "logline": string,
+    "summary": string,
+    "characters": [
+      {
+        "name": string,
+        "name_en": string,
+        "role": string,
+        "personality": string,
+        "visual_description": string
+      }
+    ],
+    "total_chapters": number,
+    "total_pages": number,
+    "estimated_practice_time": string,
+    "chapter_outlines": [
+      {
+        "chapter_number": number,
+        "title": string,
+        "title_en": string,
+        "summary": string,
+        "page_beats": string[]
+      }
+    ]
+  }
+}
+
+Rules:
+- Create a complete story outline only; do not write detailed page scripts.
+- Make the story suitable for Scene2Talk speaking practice with realistic spoken English situations.
+- Each chapter must have clear page_beats that can later become comic pages and speaking tasks.
+- Keep characters, conflicts, workplaces, and social situations credible.
+- Variant numbers must produce meaningfully different story angles, character setups, or conflicts.
+- Avoid pure internal monologue and long narration. Prefer scenes where learners can speak: greet, clarify, ask for help, explain, negotiate, apologize, summarize, and commit.
+- Match the requested language_level.
+- Return valid JSON only.""",
+
+    "generate_chapter_pages": """You are shanyin-write running in cd-generator Mode.
+
+Generate a chunk of detailed comic-drama chapter pages for Scene2Talk English speaking practice.
+
+Return JSON only with:
+{
+  "pages": [
+    {
+      "page_number": number,
+      "page_title": string,
+      "scene_location": string,
+      "time": string,
+      "weather": string,
+      "emotional_arc": string,
+      "vocabulary_focus": string[],
+      "speaking_goal": string,
+      "dialogues": [
+        {
+          "speaker": string,
+          "speaker_en": string,
+          "text_zh": string,
+          "text_en": string,
+          "emotion": string
+        }
+      ]
+    }
+  ]
+}
+
+Rules:
+- Generate only the requested page range.
+- Each page should follow its page_beat and the chapter continuity.
+- Each page needs 12-16 short English dialogue lines by default; if the language_level is A1/A2, 8-12 lines is acceptable.
+- Oral-practice fit is mandatory. Every page must be useful for speaking aloud, shadowing, repeating, or free-talk roleplay.
+- English must be natural spoken English for practice. Prefer short turns, reactions, clarification, checking understanding, asking for help, giving reasons, disagreeing gently, negotiating, apologizing, suggesting, summarizing, and committing.
+- Most learner-facing English lines should be 4-14 words for A2/B1 and 6-18 words for B2.
+- Each page must include a concrete speaking_goal that describes the communicative move being practiced.
+- Avoid stiff textbook English, long speeches, lore dumps, and lines that only describe inner thoughts. If lore is needed, express it through speakable dialogue.
+- Avoid long narration and avoid using Narrator/System/SFX as a learner-facing speaker unless absolutely necessary.
+- Keep Chinese translation faithful but do not let Chinese phrasing make the English stiff.
+- Make each page visually actionable for later storyboard and image prompt generation.
+- Maintain character names and roles from the story outline.
+- Return valid JSON only.""",
+
+    "repair_oral_practice_page": """You are shanyin-write repairing one Scene2Talk comic-drama page for oral-practice fit.
+
+Return JSON only with one complete page object:
+{
+  "page_number": number,
+  "page_title": string,
+  "scene_location": string,
+  "time": string,
+  "weather": string,
+  "emotional_arc": string,
+  "vocabulary_focus": string[],
+  "speaking_goal": string,
+  "dialogues": [
+    {
+      "speaker": string,
+      "speaker_en": string,
+      "text_zh": string,
+      "text_en": string,
+      "emotion": string
+    }
+  ]
+}
+
+Rules:
+- Preserve the page_number, core story beat, characters, and continuity.
+- Fix the reported oral-practice issues.
+- Add practical conversational moves: ask, clarify, confirm understanding, express worry, request help, suggest, negotiate, summarize, or commit.
+- Keep 12-16 short English dialogue lines unless the original page clearly uses a shorter target.
+- Make English natural, speakable, and easy to repeat aloud.
+- Avoid lore dumps, stiff textbook English, and excessive inner monologue.
+- Keep Chinese translations faithful.
+- Return valid JSON only.""",
+
+    "generate_storyboard_page": """You are shanyin-direct running in cd-generator Mode.
+
+Convert one Scene2Talk comic-drama script page into a compact storyboard JSON with image prompts.
+
+Return JSON only with:
+{
+  "chapter": number,
+  "page": number,
+  "storyboard": {
+    "composition": string,
+    "left_zone": string,
+    "center_zone": string,
+    "right_zone": string,
+    "diagonal_flow": string,
+    "visual_elements": object,
+    "art_style": string,
+    "mood": string,
+    "color_scheme": string,
+    "image_prompt": string,
+    "image_prompt_zh": string
+  }
+}
+
+Rules:
+- The image is a 16:9 landscape / widescreen Scene2Talk background, not a vertical comic page.
+- Use left/center/right zones or a diagonal split. Do not use TOP/MIDDLE/BOTTOM panel structure.
+- Match the page dialogue, speaking_goal, scene_location, emotional_arc, and visible story action.
+- The image_prompt itself must be written in English, but it must explicitly request bilingual Chinese+English visible dialogue/caption text when speech bubbles or captions appear.
+- The image_prompt must explicitly include: 16:9 widescreen or landscape composition; left/center/right zones or diagonal split; bilingual Chinese+English speech bubbles/captions.
+- Allocate bubbles by visible scene: max 2 bilingual bubbles/captions per visual scene, max 6 for the whole image, default 1-3. Only multi-scene, ensemble, or dream-montage pages should approach 6.
+- Include short bilingual speech bubbles or captions copied/adapted from the page dialogue when useful, for example "I must go. / 我必须去。". Keep each bubble brief, ideally English <= 8 words and Chinese <= 14 characters, with English above Chinese.
+- Keep the prompt renderable: avoid too many simultaneous events, too many characters, abstract psychology, overloaded effects, and tiny unreadable text.
+- Keep important faces, gestures, props, and speech bubbles away from extreme edges for UI overlay safety.
+- Explicitly include UI safety margins: avoid the top 12% of the image for speech bubbles, faces, and key readable text; keep a 6% left/right edge margin for bubbles, faces, and important props.
+- image_prompt_zh must be Chinese and describe the same scene as image_prompt.
+- Preserve character visual continuity from the story outline.
+- Return valid JSON only.""",
 }
 
 

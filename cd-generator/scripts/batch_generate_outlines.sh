@@ -66,6 +66,10 @@ echo "章节数：$TOTAL_CHAPTERS"
 echo "每章页数：$PAGES_PER_CHAPTER"
 echo ""
 
+if [[ ! -x "$SCRIPT_DIR/generate_outline_with_llm.py" ]]; then
+  chmod +x "$SCRIPT_DIR/generate_outline_with_llm.py"
+fi
+
 BATCH_ID="$(date +%Y%m%d_%H%M%S)_batch_${THEME// /_}"
 BATCH_DIR="$OUTPUT_BASE/$BATCH_ID"
 mkdir -p "$BATCH_DIR"
@@ -99,8 +103,7 @@ EOF
   echo "📁 任务目录：$TASK_DIR"
   echo "🎬 调用 shanyin-write 生成故事大纲..."
 
-  # 这里需要调用 shanyin-write skill
-  # 由于是在脚本中，我们创建一个临时提示文件
+  # 保留请求文件，方便人工复核或失败后重试。
   cat > "$TASK_DIR/data/outline_request.txt" <<EOF
 请使用 shanyin-write 的 cd-generator Mode 生成故事大纲。
 
@@ -114,16 +117,26 @@ EOF
 - variant: $i (第${i}个变体，请在情节、角色、冲突设计上有所不同)
 
 **输出要求**：
-- 直接输出 JSON 格式的 story_outline.json
-- 不要 Markdown 解释
+- 先在对话里输出一条进度反馈，说明已收到 cd-generator 调用和目标文件
+- 生成过程中按 shanyin-write 的 Progress Feedback Protocol 报告进度
+- 最终写入 story_outline.json 的文件内容必须是纯 JSON
+- 不要把进度反馈或 Markdown 解释写入 JSON 文件
 - 不要暂停确认
 - 每个变体应该有不同的故事角度、角色设定或冲突设计
 
 **目标文件**：$TASK_DIR/data/story_outline.json
 EOF
 
-  echo "   ⚠️  需要手动调用 /shanyin-write 或通过 Claude 生成"
   echo "   📄 请求文件：$TASK_DIR/data/outline_request.txt"
+  python3 "$SCRIPT_DIR/generate_outline_with_llm.py" \
+    --task-dir "$TASK_DIR" \
+    --theme "$THEME" \
+    --genre "$GENRE" \
+    --level "$LANGUAGE_LEVEL" \
+    --chapters "$TOTAL_CHAPTERS" \
+    --pages "$PAGES_PER_CHAPTER" \
+    --variant "$i" \
+    --art-style "manga"
 
   TASK_DIRS+=("$TASK_DIR")
 
@@ -157,7 +170,7 @@ echo "批次目录：$BATCH_DIR"
 echo "任务数量：${#TASK_DIRS[@]}"
 echo ""
 echo "📝 下一步："
-echo "1. 为每个任务生成故事大纲（调用 /shanyin-write）"
+echo "1. 故事大纲已由 generate_outline_with_llm.py 自动生成"
 echo "2. 运行评分脚本："
 echo "   python3 $SCRIPT_DIR/score_story_outline.py ${TASK_DIRS[*]}"
 echo ""

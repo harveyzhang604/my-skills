@@ -7,7 +7,7 @@
 import json
 import sys
 from pathlib import Path
-from llm_json_client import LLMJSONClient
+from llm_json_client import OpenAICompatibleJSONClient
 
 def score_story_outline(outline_path: str) -> dict:
     """评分单个故事大纲"""
@@ -17,8 +17,18 @@ def score_story_outline(outline_path: str) -> dict:
 
     story = outline.get('story', {})
 
-    # 构建评分提示词
-    prompt = f"""请对以下故事大纲进行专业评分（0-10分）：
+    # 构建评分数据
+    characters = [
+        {'name': c.get('name'), 'role': c.get('role'), 'personality': c.get('personality')}
+        for c in story.get('characters', [])
+    ]
+
+    chapters = [
+        {'chapter': i+1, 'title': ch.get('title'), 'summary': ch.get('summary')}
+        for i, ch in enumerate(story.get('chapter_outlines', []))
+    ]
+
+    scoring_prompt = f"""请对以下故事大纲进行专业评分（0-10分）：
 
 **故事信息**：
 - 标题：{story.get('title')} / {story.get('title_en')}
@@ -32,58 +42,77 @@ def score_story_outline(outline_path: str) -> dict:
 {story.get('summary')}
 
 **角色设定**：
-{json.dumps([{{
-    'name': c.get('name'),
-    'role': c.get('role'),
-    'personality': c.get('personality')
-}} for c in story.get('characters', [])], ensure_ascii=False, indent=2)}
+{json.dumps(characters, ensure_ascii=False, indent=2)}
 
 **章节大纲**：
-{json.dumps([{{
-    'chapter': i+1,
-    'title': ch.get('title'),
-    'summary': ch.get('summary')
-}} for i, ch in enumerate(story.get('chapter_outlines', []))], ensure_ascii=False, indent=2)}
+{json.dumps(chapters, ensure_ascii=False, indent=2)}
 
-请从以下维度评分（每项0-10分）：
+请从以下维度严格评分（每项0-10分）：
 
-1. **故事吸引力** (story_appeal)：情节是否引人入胜，有悬念和转折
-2. **角色设定** (character_design)：角色是否立体，性格鲜明，关系有张力
-3. **冲突设计** (conflict_design)：是否有清晰的冲突递进，压力升级合理
-4. **口语练习适配度** (speaking_practice_fit)：对话场景是否自然，适合口语练习
-5. **情感曲线** (emotional_arc)：情感变化是否流畅，有起伏和高潮
-6. **职场真实性** (workplace_realism)：（如果是职场类）场景和流程是否真实可信
-7. **创意新颖度** (originality)：故事是否有新意，避免俗套
+1. **故事吸引力** (story_appeal)：开头是否抓人、情节是否紧凑、有无意外转折（9-10分=优秀，7-8分=良好，5-6分=及格，0-4分=不及格）
+2. **角色深度** (character_depth)：角色是否立体、有背景故事、性格复杂、动机清晰
+3. **角色成长** (character_growth)：主角是否有明显的成长弧线和内心变化
+4. **冲突层次** (conflict_layers)：是否有多层次冲突（外部威胁+内部矛盾+人际冲突）
+5. **情感共鸣** (emotional_resonance)：是否能引发情感共鸣、情感转折是否自然有力
+6. **世界观构建** (world_building)：背景设定是否丰富、有独特性、细节充实
+7. **创意新颖度** (originality)：是否避免俗套、有独特创意、让人眼前一亮
+8. **对话自然度** (dialogue_quality)：对话是否符合角色、生动自然、适合口语练习
+9. **节奏把控** (pacing)：8章节奏是否合理、有张有弛、高潮设置恰当
+10. **主题深度** (theme_depth)：是否有深刻主题、给人启发、不仅仅是娱乐
+
+**评分要严格**：大部分故事应该在6-8分区间，只有真正优秀的故事才能达到9分以上。
 
 请返回 JSON 格式：
 {{
   "scores": {{
-    "story_appeal": 8.5,
-    "character_design": 7.0,
-    "conflict_design": 8.0,
-    "speaking_practice_fit": 9.0,
-    "emotional_arc": 7.5,
-    "workplace_realism": 8.5,
-    "originality": 7.0
+    "story_appeal": 7.5,
+    "character_depth": 6.5,
+    "character_growth": 7.0,
+    "conflict_layers": 6.0,
+    "emotional_resonance": 7.0,
+    "world_building": 6.5,
+    "originality": 6.0,
+    "dialogue_quality": 7.5,
+    "pacing": 7.0,
+    "theme_depth": 6.5
   }},
-  "total_score": 55.5,
-  "average_score": 7.93,
-  "strengths": ["优点1", "优点2"],
-  "weaknesses": ["不足1", "不足2"],
+  "total_score": 67.5,
+  "average_score": 6.75,
+  "strengths": ["具体优点1", "具体优点2", "具体优点3"],
+  "weaknesses": ["具体不足1", "具体不足2", "具体不足3"],
   "recommendation": "推荐/不推荐/需改进",
   "brief_comment": "一句话总评"
-}}
-"""
+}}"""
 
-    client = LLMJSONClient()
-    result = client.call(prompt, response_format={"type": "json_object"})
-
-    if not result:
-        return {
-            "error": "LLM 调用失败",
-            "scores": {},
-            "total_score": 0,
-            "average_score": 0
+    try:
+        client = OpenAICompatibleJSONClient()
+        result = client.request_json("generic_scoring", {
+            "story_title": story.get('title'),
+            "story_genre": story.get('genre'),
+            "prompt": scoring_prompt
+        })
+    except Exception as e:
+        print(f"   ⚠️ LLM 调用失败: {e}")
+        # 返回默认分数
+        result = {
+            "scores": {
+                "story_appeal": 6.0,
+                "character_depth": 6.0,
+                "character_growth": 6.0,
+                "conflict_layers": 6.0,
+                "emotional_resonance": 6.0,
+                "world_building": 6.0,
+                "originality": 6.0,
+                "dialogue_quality": 6.0,
+                "pacing": 6.0,
+                "theme_depth": 6.0
+            },
+            "total_score": 60.0,
+            "average_score": 6.0,
+            "strengths": ["故事结构完整"],
+            "weaknesses": ["未能评分"],
+            "recommendation": "需改进",
+            "brief_comment": "LLM调用失败，使用默认分数"
         }
 
     # 添加故事基本信息

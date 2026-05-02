@@ -1,37 +1,22 @@
 # ChatGPT Image Generator
 
-使用 OpenCLI 调用 ChatGPT Image 2 生成图片，支持循环检查机制和自动下载保存。
+独立的 ChatGPT Image/OpenCLI 生图服务。它可以直接生成单图，也可以被 `cd-generator` 或其它 skill 复用。
 
-## 使用方法
+## 单图使用
 
 ```bash
-# 基本使用 - 使用默认提示词生成图片
-/skill chatgpt-image
-
-# 使用自定义提示词
-/skill chatgpt-image "你的中文提示词"
-
-# 指定输出目录
-/skill chatgpt-image "提示词" --output ~/Desktop
+/Users/zhanghua/.claude/skills/chatgpt-image/run.sh "你的提示词" "$HOME/Pictures/chatgpt"
 ```
 
-## 功能特性
+## 服务脚本
 
-- 使用 OpenCLI 调用 ChatGPT Image 2 生成图片
-- 智能循环检查机制（5分钟、7分钟、10分钟三次检查）
-- 自动下载生成的图片到指定位置
-- 支持自定义提示词（原样传递，不做优化）
-- 支持自定义输出目录
+```bash
+SERVICE=/Users/zhanghua/.claude/skills/chatgpt-image/scripts/opencli_image_service.py
 
-## 工作原理
+python3 "$SERVICE" submit --prompt "$PROMPT"
+python3 "$SERVICE" status --link "$CHATGPT_LINK"
+python3 "$SERVICE" download --link "$CHATGPT_LINK" --output "$OUTPUT_FILE"
+python3 "$SERVICE" generate --prompt "$PROMPT" --output "$OUTPUT_FILE"
+```
 
-1. 调用 `opencli chatgpt image` 命令提交生成请求
-2. 进入等待循环，每隔一段时间检查生成状态
-3. 图片生成完成后自动下载到本地
-4. 返回生成的图片文件路径
-
-## 注意事项
-
-- 需要提前登录 ChatGPT 网页版（chatgpt.com）
-- 图片生成时间较长，请耐心等待
-- 如果三次检查都未完成，会返回 ChatGPT 链接供手动查看
+调用方负责批量、任务目录、提示词质检和进度；本服务只负责单张图的提交、检查和下载。

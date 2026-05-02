@@ -58,11 +58,6 @@ def is_stage_direction(text):
     stripped = (text or "").strip()
     return stripped.startswith("(") and stripped.endswith(")")
 
-def mostly_ascii_visible_text(text):
-    visible = re.findall(r"[A-Za-z0-9][A-Za-z0-9'’.,!?;:()&%$#@/ -]{1,}", text or "")
-    non_latin = re.findall(r"[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]", text or "")
-    return bool(visible) and not non_latin
-
 def image_prompt_mentions_16x9(prompt):
     text = (prompt or "").lower()
     return any(token in text for token in ["16:9", "16x9", "landscape", "wide horizontal", "widescreen"])
@@ -74,13 +69,29 @@ def image_prompt_mentions_widescreen_zones(prompt):
         and not all(token in text for token in ["top:", "middle:", "bottom:"])
     )
 
-def image_prompt_mentions_english_text_only(prompt):
+def image_prompt_mentions_bilingual_text(prompt):
     text = (prompt or "").lower()
     return (
-        "english only" in text
-        or "english-only" in text
-        or "visible text must be in english" in text
-        or "all readable text in english" in text
+        "bilingual" in text
+        or "chinese + english" in text
+        or "chinese and english" in text
+        or re.search(r'"[^"]*[A-Za-z][^"]*/[^"]*[\u4e00-\u9fff][^"]*"', prompt or "")
+    )
+
+def image_prompt_has_english_only_conflict(prompt):
+    text = (prompt or "").lower()
+    conflict_patterns = [
+        "english text only",
+        "english only in speech bubbles",
+        "all text in english only",
+        "all visible text in english only",
+        "visible text must be in english",
+        "all readable text in english",
+        "english-only",
+        "no chinese",
+    ]
+    return any(pattern in text for pattern in conflict_patterns) or bool(
+        re.search(r"speech bubble[s]?\s+'[^']+'\s+in english", prompt or "", re.IGNORECASE)
     )
 
 def image_prompt_mentions_speech(prompt):
@@ -262,12 +273,12 @@ if os.path.isdir(storyboards_dir):
                 add_issue(issues, "warning", "image_prompt_missing_16x9", f"storyboards/{filename}", "英文 image_prompt 未明确要求 16:9 横版构图。", "加入 16:9 landscape / widescreen composition。")
             if not image_prompt_mentions_widescreen_zones(image_prompt):
                 add_issue(issues, "warning", "image_prompt_missing_widescreen_zones", f"storyboards/{filename}", "英文 image_prompt 未明确 16:9 横版分区，或仍像竖版 TOP/MIDDLE/BOTTOM 漫画面板。", "使用 left/center/right zones、非均匀横向分区或 diagonal split，并避免 TOP/MIDDLE/BOTTOM 上下分区。")
-            if not image_prompt_mentions_english_text_only(image_prompt):
-                add_issue(issues, "warning", "image_prompt_missing_english_only_text", f"storyboards/{filename}", "英文 image_prompt 未明确所有可见文字必须 English only。", "加入 visible text, captions, signs, UI, and speech bubbles must be English only。")
+            if not image_prompt_mentions_bilingual_text(image_prompt):
+                add_issue(issues, "warning", "image_prompt_missing_bilingual_text", f"storyboards/{filename}", "英文 image_prompt 未明确对话气泡/字幕需要中英双语。", "加入 bilingual Chinese + English speech bubbles/captions，例如 \"I must go. / 我必须去。\"。")
+            if image_prompt_has_english_only_conflict(image_prompt):
+                add_issue(issues, "error", "image_prompt_english_only_conflict", f"storyboards/{filename}", "英文 image_prompt 仍包含 English only / no Chinese 等旧规则，会和中英双语气泡要求冲突。", "运行 ensure_bilingual_bubbles.py 清理旧规则，保留 bilingual Chinese + English visible dialogue/caption text。")
             if not image_prompt_mentions_speech(image_prompt):
-                add_issue(issues, "warning", "image_prompt_missing_speech_bubbles", f"storyboards/{filename}", "英文 image_prompt 未提到漫画式英文对话气泡或短 caption。", "根据页面对白加入 1-3 个短英文 speech bubbles/captions，避免无对白的空背景。")
-            if not mostly_ascii_visible_text(image_prompt):
-                add_issue(issues, "info", "image_prompt_visible_text_unclear", f"storyboards/{filename}", "无法从提示词中确认画面内可见文字示例是纯英文。", "如有气泡/标识/便签，写出短英文示例；不要出现中文或伪文字。")
+                add_issue(issues, "warning", "image_prompt_missing_speech_bubbles", f"storyboards/{filename}", "英文 image_prompt 未提到漫画式对话气泡或短 caption。", "根据页面对白加入 1-3 个短中英双语 speech bubbles/captions，避免无对白的空背景。")
 
 if os.path.isdir(missions_dir):
     for filename in sorted(os.listdir(missions_dir)):
