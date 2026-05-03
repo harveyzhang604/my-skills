@@ -2,7 +2,7 @@
 name: cd-generator
 description: Use when generating complete comic drama content for English speaking practice, including story outline, chapter scripts, page storyboards, image prompts, optional Story-Guided missions, images, and preview output.
 metadata:
-  version: 2.15.0
+  version: 2.16.0
   version_scope: cd-generator skill only, separate from the Scene2Talk app version.
 ---
 
@@ -609,6 +609,11 @@ python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/quality_gate.py "$TA
    - 需要登录 ChatGPT 网页版
    - 异步生成，需要监控循环
    - 适合有 ChatGPT Plus 订阅的用户
+   - **✨ 新增：Gemini 自动备选**
+     - 当 ChatGPT Image 遇到限额错误（"Image generation limit reached"）时
+     - 自动切换到 `opencli gemini image` 生成图片
+     - 无需手动干预，透明切换
+     - 详见 `GEMINI_FALLBACK.md`
 
 2. **YouMind API 模式**：直接调用 YouMind API 生成图片
    - 需要配置 YouMind API Key
@@ -1259,35 +1264,25 @@ dejection → enlightenment → triumph (一张图里包含太多情绪变化)
 
 ---
 
-**版本**：v2.10.0
-**更新日期**：2026-05-01
+**版本**：v2.16.0
+**更新日期**：2026-05-03
 **主要改进**：
-- **新增阶段二：故事脉络和角色设定**
-  - 新增 `scripts/generate_story_arc_and_cards.py`：生成故事脉络和角色卡片
-  - 在批量筛选后、详细剧本前，先生成完整的故事框架
-  - 故事脉络：8个章节的核心事件、转折点、情感基调
-  - 角色卡片：角色名称、描述、阵营分类、视觉描述
-  - 支持生成角色头像提示词和图片
-- **优化工作流程为三个阶段**
-  - 阶段一：批量大纲生成和评分（快速筛选）
-  - 阶段二：故事脉络和角色设定（确定核心框架）
-  - 阶段三：完整内容生成（详细剧本+分镜+图片）
-- **更新文件组织结构**
-  - 新增 `data/story_arc.json`：故事脉络
-  - 新增 `data/character_cards.json`：角色卡片数据
-  - 新增 `character_prompts/`：角色头像提示词
-  - 新增 `character_images/`：角色头像图片（可选）
-- **新增批量生成和评分功能**（v2.9.0）
-  - 新增 `scripts/score_story_outline.py`：使用 LLM 对故事大纲进行多维度评分
-  - 新增 `scripts/batch_generate_outlines.sh`：批量生成多个故事大纲变体
-  - 新增 `BATCH_SCORING.md`：批量生成和评分功能文档
-  - 支持生成10个剧本变体，评分后选择最佳的1-2个继续开发
-- **理清图片生成架构**（v2.11.0）
-  - `chatgpt-image` 是独立可复用单图/OpenCLI 服务
-  - `cd-generator` 负责批量编排和任务状态，每张图调用 `chatgpt-image/scripts/opencli_image_service.py`
-  - 移除 `cd-generator` 内重复 OpenCLI 生图实现，保留兼容入口但统一走服务
+- **✨ 新增：Gemini 图片生成自动备选方案**
+  - OpenCLI 模式下，当 ChatGPT Image 遇到限额错误时自动切换到 Gemini Image
+  - 无需手动干预，透明切换
+  - 支持的限额错误关键词：
+    - "Image generation limit reached"
+    - "You've reached your limit"
+    - "Limit has been reached"
+    - "达到限制" / "已达到限额"
+  - 新增 `submit_image_request_gemini()` 函数
+  - 修改 `submit_image_request_opencli()` 函数，添加限额检测和自动切换逻辑
+  - 生成的图片标记为 `generation_mode: "gemini_fallback"`
+  - 详细文档：`GEMINI_FALLBACK.md`
 
 **历史版本**：
+- v2.15.0: 完善图片生成和质检流程
+- v2.10.0: 新增阶段二：故事脉络和角色设定
 - v2.9.0: 批量生成和评分功能
 - v2.8.4: 对齐 shanyin-write 和 shanyin-direct 接口
 - v2.8.3: 对齐 shanyin-direct 的 16:9 横版 storyboard JSON 契约

@@ -1,7 +1,7 @@
 {
   "name": "cd-generator",
-  "version": "2.15.0",
-  "updated_at": "2026-05-02",
+  "version": "2.16.0",
+  "updated_at": "2026-05-03",
   "scope": "skill",
   "separate_from": {
     "project": "Sense Talk / Scene2Talk",
@@ -21,6 +21,7 @@
     "v2.12.0: Stage 2 now generates bilingual full character/entity visual cards plus exactly two scene tone prompts for world-style continuity.",
     "v2.13.0: Visual reference images use fixed 16:9 2x4 sheets with 8 assets per sheet; all character/entity cards are cropped from sheets, and overflow splits into multiple sheets.",
     "v2.14.0: Scene tone images are now defined as world visual bible images: concrete core locations, reusable motifs, material/color rules, and rough spatial anchors, not pure mood boards or precise maps.",
-    "v2.15.0: Image generation now builds prompts_with_refs before submission, appending per-page character/entity continuity text and scene visual bible text from character_cards.json; current OpenCLI mode remains text-only and stores .refs.json for future image-reference API integration."
+    "v2.15.0: Image generation now builds prompts_with_refs before submission, appending per-page character/entity continuity text and scene visual bible text from character_cards.json; current OpenCLI mode remains text-only and stores .refs.json for future image-reference API integration.",
+    "v2.16.0: Added Gemini Image as automatic fallback when ChatGPT Image hits generation limit. OpenCLI mode now detects limit errors and transparently switches to 'opencli gemini image' without manual intervention. Generated images are marked as generation_mode: gemini_fallback."
   ]
 }

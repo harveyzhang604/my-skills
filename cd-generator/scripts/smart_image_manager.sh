@@ -259,7 +259,106 @@ EOF
     fi
 }
 
+# 使用 Gemini Image 生成图片（备选方案）
+submit_image_request_gemini() {
+    local chapter=$1
+    local page=$2
+    local prompt="$3"
+    local retry_count=${4:-0}
+    local output_file="$IMAGES_DIR/chapter${chapter}_page${page}.png"
+    local gemini_dir="$HOME/Pictures/gemini"
+
+    log "📤 [Gemini] 提交: 第${chapter}章第${page}页 (备选方案)"
+
+    # 记录开始时间，用于查找新生成的图片
+    local start_time=$(date +%s)
+
+    # 调用 opencli gemini image
+    set +e
+    local gemini_output=$(opencli gemini image "$prompt" --op "$IMAGES_DIR" 2>&1)
+    local gemini_exit=$?
+    set -e
+
+    # 等待图片生成
+    sleep 3
+
+    # 查找最新生成的图片
+    local latest_image=""
+    if [ -d "$gemini_dir" ]; then
+        latest_image=$(find "$gemini_dir" -name "*.png" -type f -newermt "@$start_time" -print -quit 2>/dev/null || true)
+    fi
+
+    if [ $gemini_exit -eq 0 ] && [ -n "$latest_image" ] && [ -f "$latest_image" ]; then
+        # 移动图片到目标位置
+        mv "$latest_image" "$output_file"
+        log "✅ [Gemini] 图片生成成功: chapter${chapter}_page${page}.png"
+
+        # 记录到 JSON
+        CHAPTER="$chapter" \
+        PAGE="$page" \
+        PROMPT_TEXT="$prompt" \
+        RETRY_COUNT="$retry_count" \
+        OUTPUT_FILE="$output_file" \
+        IMAGE_LINKS_FILE="$IMAGE_LINKS_FILE" \
+        python3 << 'EOF'
+import json
+import os
+from datetime import datetime
+
+links_file = os.environ["IMAGE_LINKS_FILE"]
+chapter = int(os.environ["CHAPTER"])
+page = int(os.environ["PAGE"])
+output_file = os.environ["OUTPUT_FILE"]
+
+if os.path.exists(links_file):
+    with open(links_file, "r", encoding="utf-8") as f:
+        data = json.load(f)
+else:
+    data = {"images": []}
+
+# 检查是否已存在该图片的记录
+existing = None
+for i, img in enumerate(data["images"]):
+    if int(img.get("chapter", 0)) == chapter and int(img.get("page", 0)) == page:
+        existing = i
+        break
+
+file_size = os.path.getsize(output_file) if os.path.exists(output_file) else 0
+
+image_data = {
+    "chapter": chapter,
+    "page": page,
+    "filename": f"chapter{chapter}_page{page}.png",
+    "link": "gemini://generated",
+    "prompt": os.environ["PROMPT_TEXT"].strip(),
+    "status": "completed",
+    "retry_count": int(os.environ["RETRY_COUNT"]),
+    "submitted_at": datetime.utcnow().isoformat() + "Z",
+    "completed_at": datetime.utcnow().isoformat() + "Z",
+    "generation_mode": "gemini_fallback",
+    "file_size": file_size,
+    "fallback_reason": "chatgpt_limit_reached"
+}
+
+if existing is not None:
+    data["images"][existing] = image_data
+else:
+    data["images"].append(image_data)
+
+data["images"].sort(key=lambda img: (int(img.get("chapter", 0)), int(img.get("page", 0))))
+
+with open(links_file, "w", encoding="utf-8") as f:
+    json.dump(data, f, indent=2, ensure_ascii=False)
+EOF
+        return 0
+    else
+        log "❌ [Gemini] 图片生成失败"
+        return 1
+    fi
+}
+
 # 使用 chatgpt-image skill 提交图片生成请求 (OpenCLI 浏览器模式)
+# 如果遇到限额错误，自动切换到 Gemini
 submit_image_request_opencli() {
     local chapter=$1
     local page=$2
@@ -317,11 +416,29 @@ PYEOF
         attempt=1
     fi
 
+    # 检查是否是限额错误
+    local is_limit_error=0
+    if echo "$combined_result" | grep -qi "image generation limit reached\|you've reached your limit\|limit has been reached\|达到限制\|已达到限额"; then
+        is_limit_error=1
+    fi
+
     if [ -z "$link" ]; then
         log "❌ [OpenCLI] 提交失败，未解析到 ChatGPT 链接；详见 $submit_log"
         if [ -n "$service_error" ]; then
             log "   错误: $service_error"
         fi
+
+        # 如果是限额错误，切换到 Gemini
+        if [ $is_limit_error -eq 1 ]; then
+            log "⚠️  检测到 ChatGPT Image 限额错误，切换到 Gemini Image..."
+            if submit_image_request_gemini $chapter $page "$prompt" $retry_count; then
+                return 0
+            else
+                log "❌ Gemini 备选方案也失败了"
+                return 1
+            fi
+        fi
+
         return 1
     fi
 
