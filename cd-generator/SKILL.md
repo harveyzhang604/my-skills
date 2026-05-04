@@ -331,6 +331,7 @@ python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/audit_oral_practice_
 审查重点：
 
 - 每页是否有明确 `speaking_goal`
+- 每页是否有结构化 `conversation_mission.must_hit_beats`
 - 英文对白是否足够口语化，能朗读、跟读、复述或自由对话
 - 每页是否有 3 个以上可练对话动作：提问、澄清、确认理解、请求帮助、表达担心、建议、协商、总结或承诺
 - 是否旁白过多、长句过多、世界观解释过多
@@ -872,19 +873,20 @@ python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/download_chatgpt_ima
    - 图片数：{image_count}
 ```
 
-### 第9步：生成对话任务（Conversation Missions）
+### 第9步：同步对话任务（Conversation Missions）
 
-**可选步骤**：如果需要支持 Story-Guided Free Talk 模式（自由对话 + 故事引导），生成每页的对话任务元数据。推荐在图片生成前、内容质检前执行；如果放在图片之后执行，必须重新运行第5步内容质检。
+**必做步骤**：Story-Guided Free Talk 是 Scene2Talk 主链路的一部分。新版 `generate_chapter_with_llm.py` 会在每页脚本内直接生成 `conversation_mission.must_hit_beats`；本步骤负责把内嵌 mission 规范化、补齐旧数据缺口，并同步导出到 `missions/chapter{N}_page{M}.json`。推荐在图片生成前、内容质检前执行；如果放在图片之后执行，必须重新运行第5步内容质检。
 
 使用辅助脚本：
 ```bash
 python3 /Users/zhanghua/.claude/skills/cd-generator/scripts/generate_conversation_missions.py "$TASK_DIR"
 ```
 
-该步骤也需要模型语义抽取，直接复用 `config/llm.env`。
+如果章节脚本已经包含有效 `conversation_mission.must_hit_beats`，脚本会直接复用，不再重复调用模型；只有旧脚本缺 mission 时才会用模型语义抽取，配置复用 `config/llm.env`。
 
 **生成内容**：
 - 为每页创建 `missions/chapter{N}_page{M}.json`
+- 回写同一份 mission 到 `scripts/chapter{N}.json` 的每个 page 的 `conversation_mission`
 - 包含：场景、角色、任务摘要、结构化必达剧情节点（must_hit_beats）、目标短语（target_phrases）
 - 模型根据 `data/story_outline.json`、页面对话和 `language_level` 抽取自由对话任务
 - 脚本只做 JSON 规范化和结构校验，不用关键词算法判断剧情意图
@@ -1300,7 +1302,8 @@ Story-Guided Free Talk 的目标是：用户可以自由说，不必背固定台
 
 **技能内已有三个辅助文件**：
 - `scripts/llm_json_client.py`：OpenAI-compatible JSON 模型客户端，统一承接语义审稿、mission 抽取和 director 判断。
-- `scripts/generate_conversation_missions.py`：用模型从章节剧本生成每页 mission。
+- `scripts/generate_chapter_with_llm.py`：章节脚本生成时直接要求每页输出 `conversation_mission.must_hit_beats`。
+- `scripts/generate_conversation_missions.py`：复用内嵌 mission，或为旧脚本补齐每页 mission，并同步写入 `missions/`。
 - `scripts/conversation_director.py`：用模型判断用户是否语义完成当前 beat。
 - `scripts/story_guided_integration.ts`：框架无关的 TypeScript 类型和 prompt builder，作为后续接入主项目的参考，不直接调用主项目运行时代码。
 

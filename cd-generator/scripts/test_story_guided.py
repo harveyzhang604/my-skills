@@ -2,6 +2,7 @@
 
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -10,7 +11,8 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from conversation_director import ConversationDirector
-from generate_conversation_missions import generate_mission_for_page
+from generate_conversation_missions import generate_mission_for_page, process_task_directory
+from generate_chapter_with_llm import validate_pages
 from llm_json_client import parse_json_content
 
 
@@ -65,6 +67,203 @@ class FailingLLMClient:
 
 
 class StoryGuidedMissionTest(unittest.TestCase):
+    def test_chapter_page_validation_requires_structured_conversation_mission(self):
+        page = {
+            "page_number": 1,
+            "page_title": "First Day",
+            "scene_location": "Office",
+            "speaking_goal": "Greet Alex and introduce yourself.",
+            "vocabulary_focus": ["welcome"],
+            "dialogues": [
+                {
+                    "speaker": "Lin",
+                    "speaker_en": "Lin Xiao",
+                    "text_en": "Hi, I'm Lin.",
+                    "text_zh": "你好，我是林晓。",
+                    "emotion": "nervous",
+                }
+            ],
+            "conversation_mission": {
+                "characters": ["Lin Xiao", "Alex Chen"],
+                "user_role": "Lin Xiao",
+                "ai_role": "Alex Chen",
+                "mission_summary": "练习自我介绍。",
+                "must_hit_beats": [
+                    {
+                        "label": "Greet Alex",
+                        "label_zh": "问候 Alex",
+                        "intent": "greet_introduce",
+                        "acceptance_criteria": "Learner greets Alex and says their name.",
+                        "example_phrases": ["Hi, I'm Lin."],
+                        "source_dialogue_indices": [1],
+                    }
+                ],
+                "target_phrases": ["Hi, I'm Lin."],
+            },
+        }
+
+        pages = validate_pages({"pages": [page]}, 1, 1, language_level="B1")
+
+        self.assertEqual(pages[0]["conversation_mission"]["chapter"], 1)
+        self.assertEqual(pages[0]["conversation_mission"]["page"], 1)
+        self.assertEqual(
+            pages[0]["conversation_mission"]["must_hit_beats"][0]["id"],
+            "beat_1_greet_introduce",
+        )
+
+    def test_chapter_page_validation_rejects_missing_conversation_mission(self):
+        page = {
+            "page_number": 1,
+            "page_title": "First Day",
+            "scene_location": "Office",
+            "speaking_goal": "Greet Alex and introduce yourself.",
+            "dialogues": [
+                {
+                    "speaker": "Lin",
+                    "speaker_en": "Lin Xiao",
+                    "text_en": "Hi, I'm Lin.",
+                    "text_zh": "你好，我是林晓。",
+                    "emotion": "nervous",
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(ValueError, "conversation_mission"):
+            validate_pages({"pages": [page]}, 1, 1, language_level="B1")
+
+    def test_mission_reuses_embedded_conversation_mission_without_llm(self):
+        page = {
+            "scene_location": "Office",
+            "vocabulary_focus": ["welcome"],
+            "dialogues": [
+                {
+                    "speaker": "Lin",
+                    "speaker_en": "Lin Xiao",
+                    "text_en": "Hi, I'm Lin.",
+                    "text_zh": "你好，我是林晓。",
+                }
+            ],
+            "conversation_mission": {
+                "characters": ["Lin Xiao", "Alex Chen"],
+                "user_role": "Lin Xiao",
+                "ai_role": "Alex Chen",
+                "mission_summary": "练习开场问候。",
+                "must_hit_beats": [
+                    {
+                        "label": "Greet Alex",
+                        "label_zh": "问候 Alex",
+                        "intent": "greet_introduce",
+                        "acceptance_criteria": "Learner greets Alex.",
+                        "example_phrases": ["Hi, Alex."],
+                        "source_dialogue_indices": [1],
+                    }
+                ],
+                "target_phrases": ["Hi, Alex."],
+            },
+        }
+
+        mission = generate_mission_for_page(
+            page,
+            chapter_num=1,
+            page_num=1,
+            language_level="B1",
+            llm_client=FailingLLMClient(),
+        )
+
+        self.assertEqual(mission["must_hit_beats"][0]["intent"], "greet_introduce")
+        self.assertEqual(mission["user_role"], "Lin Xiao")
+
+    def test_process_task_directory_writes_mission_files_and_embeds_back_to_scripts(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            task_dir = Path(tmp)
+            scripts_dir = task_dir / "scripts"
+            scripts_dir.mkdir(parents=True)
+            (task_dir / "data").mkdir()
+            (task_dir / "data" / "story_outline.json").write_text(
+                json.dumps(
+                    {
+                        "story": {
+                            "title": "测试故事",
+                            "title_en": "Test Story",
+                            "language_level": "B1",
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            (task_dir / "data" / "progress.json").write_text(
+                json.dumps({"status": {}}, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            chapter_path = scripts_dir / "chapter1.json"
+            chapter_path.write_text(
+                json.dumps(
+                    {
+                        "chapter_number": 1,
+                        "pages": [
+                            {
+                                "page_number": 1,
+                                "page_title": "First Day",
+                                "scene_location": "Office",
+                                "vocabulary_focus": ["welcome"],
+                                "dialogues": [
+                                    {
+                                        "speaker": "Lin",
+                                        "speaker_en": "Lin Xiao",
+                                        "text_en": "Hi, Alex.",
+                                        "text_zh": "你好，Alex。",
+                                    }
+                                ],
+                                "conversation_mission": {
+                                    "characters": ["Lin Xiao", "Alex Chen"],
+                                    "user_role": "Lin Xiao",
+                                    "ai_role": "Alex Chen",
+                                    "mission_summary": "练习开场问候。",
+                                    "must_hit_beats": [
+                                        {
+                                            "label": "Greet Alex",
+                                            "label_zh": "问候 Alex",
+                                            "intent": "greet_introduce",
+                                            "acceptance_criteria": "Learner greets Alex.",
+                                            "example_phrases": ["Hi, Alex."],
+                                            "source_dialogue_indices": [1],
+                                        }
+                                    ],
+                                    "target_phrases": ["Hi, Alex."],
+                                },
+                            }
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+
+            process_task_directory(task_dir, llm_client=FailingLLMClient())
+
+            mission_path = task_dir / "missions" / "chapter1_page1.json"
+            mission = json.loads(mission_path.read_text(encoding="utf-8"))
+            chapter = json.loads(chapter_path.read_text(encoding="utf-8"))
+            final_output = json.loads(
+                (task_dir / "output" / "final_output.json").read_text(encoding="utf-8")
+            )
+            progress = json.loads(
+                (task_dir / "data" / "progress.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(mission["must_hit_beats"][0]["intent"], "greet_introduce")
+            self.assertEqual(
+                chapter["pages"][0]["conversation_mission"]["must_hit_beats"][0]["intent"],
+                "greet_introduce",
+            )
+            self.assertEqual(
+                final_output["story"]["chapters"][0]["pages"][0]["conversation_mission"]["must_hit_beats"][0]["intent"],
+                "greet_introduce",
+            )
+            self.assertEqual(progress["status"]["conversation_missions"], "completed")
+            self.assertEqual(progress["status"]["integration"], "completed")
+
     def test_mission_uses_declared_character_roles_and_ignores_stage_speakers(self):
         page = {
             "scene_location": "Design Department",

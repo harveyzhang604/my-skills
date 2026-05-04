@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from llm_json_client import OpenAICompatibleJSONClient
+from generate_conversation_missions import normalize_mission
 
 
 def now_iso():
@@ -112,7 +113,7 @@ def build_payload(args, story, chapter_outline, start_page, end_page, previous_s
     }
 
 
-def validate_pages(result, start_page, end_page):
+def validate_pages(result, start_page, end_page, language_level=None, chapter_num=1):
     pages = result.get("pages") if isinstance(result, dict) else None
     if not isinstance(pages, list):
         raise ValueError("模型输出缺少 pages[]")
@@ -140,6 +141,23 @@ def validate_pages(result, start_page, end_page):
                 )
         if narrator_lines > max(1, len(dialogues) // 4):
             raise ValueError(f"第 {page.get('page_number')} 页旁白/系统类对白过多")
+        mission = page.get("conversation_mission")
+        if not isinstance(mission, dict):
+            raise ValueError(f"第 {page.get('page_number')} 页缺少 conversation_mission")
+        try:
+            page["conversation_mission"] = normalize_mission(
+                mission,
+                chapter_num=chapter_num,
+                page_num=int(page.get("page_number") or 0),
+                scene_location=page.get("scene_location", ""),
+                language_level=language_level or page.get("language_level") or "B1",
+                vocabulary_focus=page.get("vocabulary_focus", []),
+                estimated_turns=len(dialogues),
+            )
+        except Exception as exc:
+            raise ValueError(
+                f"第 {page.get('page_number')} 页 conversation_mission 无效：{exc}"
+            ) from exc
     return pages
 
 
@@ -165,7 +183,35 @@ def parse_args():
     parser.add_argument("--level", default=None)
     parser.add_argument("--dialogues", type=int, default=12)
     parser.add_argument("--force", action="store_true")
+    parser.add_argument("--resume", action="store_true", help="Resume from checkpoint if available")
     return parser.parse_args()
+
+
+def load_checkpoint(task_dir, chapter_number):
+    """Load checkpoint if exists."""
+    checkpoint_path = Path(task_dir) / "scripts" / f"chapter{chapter_number}.checkpoint.json"
+    if checkpoint_path.exists():
+        return load_json(checkpoint_path)
+    return None
+
+
+def save_checkpoint(task_dir, chapter_number, all_pages, previous_summary):
+    """Save checkpoint after each chunk."""
+    checkpoint_path = Path(task_dir) / "scripts" / f"chapter{chapter_number}.checkpoint.json"
+    checkpoint_data = {
+        "pages": all_pages,
+        "previous_summary": previous_summary,
+        "last_page": len(all_pages),
+        "updated_at": now_iso(),
+    }
+    save_json(checkpoint_path, checkpoint_data)
+
+
+def remove_checkpoint(task_dir, chapter_number):
+    """Remove checkpoint after successful completion."""
+    checkpoint_path = Path(task_dir) / "scripts" / f"chapter{chapter_number}.checkpoint.json"
+    if checkpoint_path.exists():
+        checkpoint_path.unlink()
 
 
 def main():
@@ -179,7 +225,7 @@ def main():
     print(f"   - 章节：第 {args.chapter} 章", flush=True)
 
     try:
-        if output_path.exists() and not args.force:
+        if output_path.exists() and not args.force and not args.resume:
             print(f"✅ shanyin-write：第 {args.chapter} 章已存在，跳过：{output_path}", flush=True)
             return 0
 
@@ -193,20 +239,35 @@ def main():
         if page_count is None:
             page_count = len(chapter_outline.get("page_beats") or []) or int(story.get("pages_per_chapter") or 0) or 6
 
-        print("⏳ shanyin-write：正在读取故事大纲和章节连续性", flush=True)
+        # Check for checkpoint
+        checkpoint = load_checkpoint(task_dir, args.chapter) if args.resume else None
+        all_pages = []
+        previous_summary = ""
+        start_from = 1
+
+        if checkpoint:
+            all_pages = checkpoint.get("pages", [])
+            previous_summary = checkpoint.get("previous_summary", "")
+            start_from = checkpoint.get("last_page", 0) + 1
+            print(f"📂 shanyin-write：从断点恢复，已完成 {len(all_pages)} 页，从第 {start_from} 页继续", flush=True)
+        else:
+            print("⏳ shanyin-write：正在读取故事大纲和章节连续性", flush=True)
+
         update_progress(task_dir, args.chapter, "running")
 
         client = OpenAICompatibleJSONClient()
-        all_pages = []
-        previous_summary = ""
-        for start in range(1, page_count + 1, args.chunk_size):
+        for start in range(start_from, page_count + 1, args.chunk_size):
             end = min(start + args.chunk_size - 1, page_count)
             print(f"⏳ shanyin-write：正在生成第 {args.chapter} 章 {start}-{end}/{page_count} 页", flush=True)
             payload = build_payload(args, story, chapter_outline, start, end, previous_summary)
             result = client.request_json("generate_chapter_pages", payload)
-            pages = validate_pages(result, start, end)
+            pages = validate_pages(result, start, end, language_level=level, chapter_num=args.chapter)
             all_pages.extend(pages)
             previous_summary = summarize_pages(all_pages)
+
+            # Save checkpoint after each successful chunk
+            save_checkpoint(task_dir, args.chapter, all_pages, previous_summary)
+
             update_progress(
                 task_dir,
                 args.chapter,
@@ -228,6 +289,9 @@ def main():
         print("⏳ shanyin-write：正在校验并写入章节 JSON", flush=True)
         save_json(output_path, chapter)
 
+        # Remove checkpoint after successful completion
+        remove_checkpoint(task_dir, args.chapter)
+
         dialogue_count = sum(len(page.get("dialogues", [])) for page in all_pages)
         summary = {
             "pages_count": len(all_pages),
@@ -242,6 +306,7 @@ def main():
     except Exception as exc:
         update_progress(task_dir, args.chapter, "failed", error=str(exc))
         print(f"❌ shanyin-write：第 {args.chapter} 章生成失败：{exc}", file=sys.stderr, flush=True)
+        print(f"💡 提示：使用 --resume 参数可从断点继续生成", file=sys.stderr, flush=True)
         return 1
 
 

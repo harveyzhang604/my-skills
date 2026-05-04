@@ -12,9 +12,11 @@ import sys
 from pathlib import Path
 
 try:
+    from integrate_final_output import integrate
     from llm_json_client import OpenAICompatibleJSONClient
     from task_path_guard import require_task_dir
 except ImportError:
+    from .integrate_final_output import integrate
     from .llm_json_client import OpenAICompatibleJSONClient
     from .task_path_guard import require_task_dir
 
@@ -41,6 +43,8 @@ ALLOWED_INTENTS = {
     "present_result",
     "other_goal",
 }
+
+MISSION_CANDIDATE_KEYS = ("conversation_mission", "mission")
 
 
 def normalize_name(value):
@@ -106,6 +110,18 @@ def generate_mission_for_page(
 ):
     dialogues = page_data.get("dialogues", [])
     scene_location = page_data.get("scene_location", "")
+    embedded_mission = embedded_conversation_mission(page_data)
+    if embedded_mission:
+        return normalize_mission(
+            embedded_mission,
+            chapter_num=chapter_num,
+            page_num=page_num,
+            scene_location=scene_location,
+            language_level=language_level or page_data.get("language_level") or page_data.get("difficulty_level", "B1"),
+            vocabulary_focus=page_data.get("vocabulary_focus", []),
+            estimated_turns=len(dialogues),
+        )
+
     client = llm_client or OpenAICompatibleJSONClient()
 
     payload = {
@@ -176,6 +192,14 @@ def normalize_mission(
         "success_rule": "Complete all must_hit_beats semantically in order; exact wording is not required.",
         "coach_note": str(model_mission.get("coach_note") or ""),
     }
+
+
+def embedded_conversation_mission(page_data):
+    for key in MISSION_CANDIDATE_KEYS:
+        candidate = page_data.get(key)
+        if isinstance(candidate, dict) and candidate.get("must_hit_beats"):
+            return candidate
+    return None
 
 
 def normalize_beats(beats):
@@ -291,8 +315,13 @@ def process_task_directory(task_dir, llm_client=None):
                 json.dump(mission, f, indent=2, ensure_ascii=False)
                 f.write('\n')
 
+            page_data["conversation_mission"] = mission
             mission_count += 1
             print(f"✅ 生成 mission: chapter{chapter_num}_page{page_num}")
+
+        with open(script_file, 'w', encoding='utf-8') as f:
+            json.dump(chapter_data, f, indent=2, ensure_ascii=False)
+            f.write('\n')
 
     progress_file = Path(task_dir) / "data" / "progress.json"
     if progress_file.exists():
@@ -309,6 +338,7 @@ def process_task_directory(task_dir, llm_client=None):
             json.dump(progress, f, indent=2, ensure_ascii=False)
             f.write('\n')
 
+    integrate(task_dir)
     print(f"\n✅ 所有 missions 已生成到: {missions_dir}")
 
 

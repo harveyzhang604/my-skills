@@ -228,6 +228,24 @@ Return JSON only with:
       "emotional_arc": string,
       "vocabulary_focus": string[],
       "speaking_goal": string,
+      "conversation_mission": {
+        "characters": string[],
+        "user_role": string,
+        "ai_role": string,
+        "mission_summary": string,
+        "must_hit_beats": [
+          {
+            "label": string,
+            "label_zh": string,
+            "intent": string,
+            "acceptance_criteria": string,
+            "example_phrases": string[],
+            "source_dialogue_indices": number[]
+          }
+        ],
+        "target_phrases": string[],
+        "coach_note": string
+      },
       "dialogues": [
         {
           "speaker": string,
@@ -249,6 +267,11 @@ Rules:
 - English must be natural spoken English for practice. Prefer short turns, reactions, clarification, checking understanding, asking for help, giving reasons, disagreeing gently, negotiating, apologizing, suggesting, summarizing, and committing.
 - Most learner-facing English lines should be 4-14 words for A2/B1 and 6-18 words for B2.
 - Each page must include a concrete speaking_goal that describes the communicative move being practiced.
+- Each page must include conversation_mission.must_hit_beats with 3-5 structured semantic beats for Story-Guided Free Talk.
+- conversation_mission.user_role must be a real speaking character the learner can roleplay; ai_role must be another real speaking character, not Narrator/System/SFX.
+- must_hit_beats are hidden semantic goals, not exact lines. Each beat must have label, label_zh, intent, acceptance_criteria, example_phrases, and source_dialogue_indices.
+- intent must be one of: greet_introduce, react_to_scene, ask_question, express_feeling, explain_reason, explain_work, offer_help, accept_feedback, request_clarification, negotiate_time, show_gratitude, show_willingness, summarize_lesson, present_result, other_goal.
+- target_phrases should contain 3-6 natural English learner phrases from the user_role only.
 - Avoid stiff textbook English, long speeches, lore dumps, and lines that only describe inner thoughts. If lore is needed, express it through speakable dialogue.
 - Avoid long narration and avoid using Narrator/System/SFX as a learner-facing speaker unless absolutely necessary.
 - Keep Chinese translation faithful but do not let Chinese phrasing make the English stiff.
@@ -268,6 +291,24 @@ Return JSON only with one complete page object:
   "emotional_arc": string,
   "vocabulary_focus": string[],
   "speaking_goal": string,
+  "conversation_mission": {
+    "characters": string[],
+    "user_role": string,
+    "ai_role": string,
+    "mission_summary": string,
+    "must_hit_beats": [
+      {
+        "label": string,
+        "label_zh": string,
+        "intent": string,
+        "acceptance_criteria": string,
+        "example_phrases": string[],
+        "source_dialogue_indices": number[]
+      }
+    ],
+    "target_phrases": string[],
+    "coach_note": string
+  },
   "dialogues": [
     {
       "speaker": string,
@@ -282,6 +323,7 @@ Return JSON only with one complete page object:
 Rules:
 - Preserve the page_number, core story beat, characters, and continuity.
 - Fix the reported oral-practice issues.
+- Preserve or regenerate conversation_mission.must_hit_beats as structured Story-Guided Free Talk metadata.
 - Add practical conversational moves: ask, clarify, confirm understanding, express worry, request help, suggest, negotiate, summarize, or commit.
 - Keep 12-16 short English dialogue lines unless the original page clearly uses a shorter target.
 - Make English natural, speakable, and easy to repeat aloud.

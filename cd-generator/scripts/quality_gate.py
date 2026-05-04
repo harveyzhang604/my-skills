@@ -148,6 +148,9 @@ def main():
     output = task_dir / "quality" / "quality_gate_report.json"
     save_json(output, report)
 
+    total_errors = report["summary"]["error_count"]
+    total_warnings = report["summary"]["warning_count"]
+
     print("🧪 分层质检")
     print(f"   - 口语审查：error {oral_report['summary']['error_count']} / warning {oral_report['summary']['warning_count']}")
     print(f"   - 分镜审查：error {storyboard_report['summary']['error_count']} / warning {storyboard_report['summary']['warning_count']}")
@@ -162,9 +165,15 @@ def main():
             f"error {image_report['summary']['error_count']} / "
             f"warning {image_report['summary']['warning_count']}"
         )
+    print(f"   - 总计：error {total_errors} / warning {total_warnings}")
     print(f"   - 报告：{output}")
 
-    return 1 if report["summary"]["error_count"] > 0 else 0
+    if total_errors > 0:
+        print(f"❌ 质检失败：发现 {total_errors} 个错误")
+        return 1
+    else:
+        print(f"✅ 质检通过")
+        return 0
 
 
 if __name__ == "__main__":
