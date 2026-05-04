@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -13,7 +14,8 @@ if str(SCRIPT_DIR) not in sys.path:
 from conversation_director import ConversationDirector
 from generate_conversation_missions import generate_mission_for_page, process_task_directory
 from generate_chapter_with_llm import validate_pages
-from llm_json_client import parse_json_content
+from generate_storyboard_with_llm import normalize_storyboard_prompt
+from llm_json_client import OpenAICompatibleJSONClient, parse_json_content
 
 
 class FakeLLMClient:
@@ -390,6 +392,86 @@ class StoryGuidedMissionTest(unittest.TestCase):
         parsed = parse_json_content('Here is the JSON:\\n{"ok": true}\\nDone.')
 
         self.assertEqual(parsed, {"ok": True})
+
+    def test_storyboard_prompt_adds_specific_bilingual_story_bubbles(self):
+        storyboard = {
+            "chapter": 1,
+            "page": 1,
+            "storyboard": {
+                "composition": "16:9 widescreen scene with left center right zones",
+                "left_zone": "Lin enters the office.",
+                "center_zone": "Sarah greets Lin.",
+                "right_zone": "A laptop shows a project brief.",
+                "image_prompt": "16:9 widescreen manga scene with LEFT, CENTER, and RIGHT zones. Lin Xiao and Sarah Wang talk near the reception desk.",
+                "image_prompt_zh": "16:9 横版漫画场景。",
+            },
+        }
+        page = {
+            "page_number": 1,
+            "scene_location": "Design office reception",
+            "speaking_goal": "Greet the mentor and clarify the first task.",
+            "emotional_arc": "nervous arrival to clearer first step",
+            "dialogues": [
+                {
+                    "speaker_en": "Lin Xiao",
+                    "text_en": "Good morning, I'm Lin.",
+                    "text_zh": "早上好，我是林晓。",
+                    "emotion": "nervous",
+                },
+                {
+                    "speaker_en": "Sarah Wang",
+                    "text_en": "Welcome aboard.",
+                    "text_zh": "欢迎加入。",
+                    "emotion": "warm",
+                },
+                {
+                    "speaker_en": "Lin Xiao",
+                    "text_en": "Could you show me the brief?",
+                    "text_zh": "能给我看需求吗？",
+                    "emotion": "focused",
+                },
+            ],
+        }
+
+        normalized = normalize_storyboard_prompt(storyboard, page)
+        prompt = normalized["storyboard"]["image_prompt"]
+
+        self.assertIn("EXACT visible text", prompt)
+        self.assertIn("Good morning, I'm Lin. / 早上好，我是林晓。", prompt)
+        self.assertIn("Could you show me the brief? / 能给我看需求吗？", prompt)
+
+    def test_llm_client_falls_back_to_backup_provider(self):
+        calls = []
+
+        class FallbackClient(OpenAICompatibleJSONClient):
+            def _post_json(self, url, request_payload, headers):
+                calls.append((url, request_payload["model"], headers))
+                if len(calls) == 1:
+                    raise RuntimeError("模型请求失败 HTTP 429: quota exceeded")
+                return json.dumps({"choices": [{"message": {"content": '{"ok": true}'}}]})
+
+        old_env = dict(os.environ)
+        try:
+            os.environ.clear()
+            os.environ.update({
+                "CD_GENERATOR_LLM_BASE_URL": "https://primary.example/v1",
+                "CD_GENERATOR_LLM_MODEL": "primary-model",
+                "CD_GENERATOR_LLM_API_KEY": "primary-key",
+                "CD_GENERATOR_LLM_ENDPOINT_MODE": "openai",
+                "CD_GENERATOR_LLM_BACKUP_BASE_URL": "https://backup.example/v1",
+                "CD_GENERATOR_LLM_BACKUP_MODEL": "backup-model",
+                "CD_GENERATOR_LLM_BACKUP_API_KEY": "backup-key",
+                "CD_GENERATOR_LLM_BACKUP_ENDPOINT_MODE": "openai",
+            })
+
+            result = FallbackClient().request_json("repair_json", {"invalid_json_text": "{}"})
+        finally:
+            os.environ.clear()
+            os.environ.update(old_env)
+
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual([call[1] for call in calls], ["primary-model", "backup-model"])
+        self.assertIn("backup-key", calls[1][2]["Authorization"])
 
     def test_mission_deduplicates_overlapping_intents(self):
         class DuplicateBeatLLM(FakeLLMClient):

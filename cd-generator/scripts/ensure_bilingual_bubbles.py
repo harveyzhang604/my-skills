@@ -95,14 +95,50 @@ def pick_bubble_pairs(chapter, page_number):
     page = next((p for p in chapter.get("pages", []) if int(p.get("page_number", 0)) == page_number), None)
     if not page:
         return []
-    pairs = []
-    for line in page.get("dialogues", []):
+    scored = []
+    speaking_goal = str(page.get("speaking_goal") or "").lower()
+    goal_words = {
+        word
+        for word in re.findall(r"[a-z]{4,}", speaking_goal)
+        if word not in {"with", "from", "that", "this", "your", "about"}
+    }
+    for index, line in enumerate(page.get("dialogues", []), start=1):
         en = str(line.get("text_en") or "").strip()
         zh = str(line.get("text_zh") or "").strip()
         if not en or not zh:
             continue
-        pairs.append((en, zh))
-    return pairs
+        if len(en.split()) > 12 or len(zh) > 20:
+            continue
+        lower = en.lower()
+        score = 0
+        if index <= 2:
+            score += 40
+        if "?" in en or "？" in zh:
+            score += 35
+        if any(marker in lower for marker in [
+            "brief", "task", "need", "first", "start", "show", "clarify",
+            "confirm", "help", "deadline", "change", "revise", "review",
+            "plan", "next", "could you", "can you", "let's", "we should",
+        ]):
+            score += 32
+        if any(marker in lower for marker in [
+            "nervous", "worried", "sorry", "stuck", "confused", "ready",
+            "thank", "welcome", "understand", "i see", "i'm not sure",
+        ]):
+            score += 22
+        score += min(sum(1 for word in goal_words if word in lower) * 12, 36)
+        scored.append((score, index, (en, zh)))
+    if not scored:
+        return []
+    selected = []
+    for _, _, pair in scored[:2]:
+        selected.append(pair)
+    for _, _, pair in sorted(scored, key=lambda item: (-item[0], item[1])):
+        if pair not in selected:
+            selected.append(pair)
+        if len(selected) >= 3:
+            break
+    return selected[:3]
 
 
 def short_pairs(bubble_pairs, limit=2):
@@ -271,6 +307,33 @@ def ensure_prompt(data, bubble_pairs):
     storyboard = data["storyboard"]
 
     prompt = sanitize_prompt(str(storyboard.get("image_prompt") or "").strip(), bubble_pairs)
+
+    # 如果有具体的气泡内容，嵌入到提示词中
+    if bubble_pairs:
+        # 检查是否已经有具体的气泡内容
+        has_specific = False
+        for en, zh in bubble_pairs[:2]:
+            # 检查前4个单词是否在提示词中
+            en_words = en.split()[:4]
+            if en_words and " ".join(en_words) in prompt:
+                has_specific = True
+                break
+
+        if not has_specific:
+            # 格式化气泡内容
+            bubble_lines = []
+            zones = ["LEFT zone", "CENTER zone", "RIGHT zone"]
+            for i, (en, zh) in enumerate(bubble_pairs[:3]):
+                zone = zones[i] if i < len(zones) else f"zone {i+1}"
+                # 限制长度
+                en_short = en[:50] if len(en) > 50 else en
+                zh_short = zh[:35] if len(zh) > 35 else zh
+                bubble_lines.append(f'{zone}: "{en_short} / {zh_short}"')
+
+            if bubble_lines:
+                specific_bubbles = " | ".join(bubble_lines)
+                prompt += f' Include 1-3 bilingual Chinese + English speech bubbles/captions with EXACT visible text to guide the viewer through the scene background, character action, and task progress: {specific_bubbles}'
+
     if (not has_bilingual_rule(prompt) or has_english_only_conflict(prompt)) and not has_bilingual_addition(prompt):
         examples = format_examples(bubble_pairs)
         addition = (

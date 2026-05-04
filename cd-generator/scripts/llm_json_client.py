@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 import urllib.error
 import urllib.request
+from dataclasses import dataclass
 
 
 TASK_PROMPTS = {
@@ -360,6 +361,8 @@ Rules:
 - Match the page dialogue, speaking_goal, scene_location, emotional_arc, and visible story action.
 - The image_prompt itself must be written in English, but it must explicitly request bilingual Chinese+English visible dialogue/caption text when speech bubbles or captions appear.
 - The image_prompt must explicitly include: 16:9 widescreen or landscape composition; left/center/right zones or diagonal split; bilingual Chinese+English speech bubbles/captions.
+- Do not merely say "characters are talking" or "add bilingual bubbles". Put the exact visible bilingual text in image_prompt so the image model can render it.
+- Choose visible bubble/caption text for story guidance, not mechanically: include only the lines or adapted short captions the viewer needs to understand the background, character activity, task/conflict, emotional turn, or next action. It may be dialogue, a short inner-thought caption, or a concise narrative caption derived from the page.
 - Allocate bubbles by visible scene: max 2 bilingual bubbles/captions per visual scene, max 6 for the whole image, default 1-3. Only multi-scene, ensemble, or dream-montage pages should approach 6.
 - Include short bilingual speech bubbles or captions copied/adapted from the page dialogue when useful, for example "I must go. / 我必须去。". Keep each bubble brief, ideally English <= 8 words and Chinese <= 14 characters, with English above Chinese.
 - Keep the prompt renderable: avoid too many simultaneous events, too many characters, abstract psychology, overloaded effects, and tiny unreadable text.
@@ -458,6 +461,15 @@ def load_local_llm_env():
                     os.environ[key] = value
 
 
+@dataclass(frozen=True)
+class LLMProviderConfig:
+    name: str
+    model: str
+    api_key: str
+    base_url: str
+    endpoint_mode: str
+
+
 class OpenAICompatibleJSONClient(LLMJSONClient):
     def __init__(self, model=None, api_key=None, base_url=None, timeout=None):
         load_local_llm_env()
@@ -466,6 +478,7 @@ class OpenAICompatibleJSONClient(LLMJSONClient):
         self.base_url = (base_url or os.getenv("CD_GENERATOR_LLM_BASE_URL") or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1").rstrip("/")
         self.endpoint_mode = (os.getenv("CD_GENERATOR_LLM_ENDPOINT_MODE") or "auto").lower()
         self.timeout = int(timeout or os.getenv("CD_GENERATOR_LLM_TIMEOUT") or "60")
+        self._explicit_provider = any([model, api_key, base_url])
         if not self.api_key:
             raise RuntimeError(
                 "缺少模型 API Key：请设置 config/llm.env、OPENAI_API_KEY 或 CD_GENERATOR_LLM_API_KEY；"
@@ -477,16 +490,69 @@ class OpenAICompatibleJSONClient(LLMJSONClient):
         if not system_prompt:
             raise ValueError(f"未知 LLM 任务: {task}")
 
-        if self._should_use_claude_messages():
-            return self._request_claude_messages(system_prompt, payload)
-        return self._request_openai_chat(system_prompt, payload)
+        errors = []
+        for provider in self._provider_chain():
+            self._activate_provider(provider)
+            try:
+                if self._should_use_claude_messages():
+                    return self._request_claude_messages(system_prompt, payload)
+                return self._request_openai_chat(system_prompt, payload)
+            except Exception as exc:
+                errors.append(f"{provider.name}({provider.model}): {exc}")
+        raise RuntimeError("所有模型供应商请求均失败：" + " | ".join(errors))
+
+    def _provider_chain(self):
+        providers = [
+            LLMProviderConfig(
+                name="primary",
+                model=self.model,
+                api_key=self.api_key,
+                base_url=self.base_url,
+                endpoint_mode=self.endpoint_mode,
+            )
+        ]
+        if self._explicit_provider:
+            return providers
+
+        backup_specs = [
+            ("backup", "CD_GENERATOR_LLM_BACKUP"),
+            ("backup2", "CD_GENERATOR_LLM_BACKUP2"),
+        ]
+        for name, prefix in backup_specs:
+            base_url = os.getenv(f"{prefix}_BASE_URL")
+            api_key = os.getenv(f"{prefix}_API_KEY")
+            model = os.getenv(f"{prefix}_MODEL")
+            if not (base_url and api_key and model):
+                continue
+            endpoint_mode = (
+                os.getenv(f"{prefix}_ENDPOINT_MODE")
+                or os.getenv("CD_GENERATOR_LLM_ENDPOINT_MODE")
+                or "auto"
+            ).lower()
+            providers.append(
+                LLMProviderConfig(
+                    name=name,
+                    model=model,
+                    api_key=api_key,
+                    base_url=base_url.rstrip("/"),
+                    endpoint_mode=endpoint_mode,
+                )
+            )
+        return providers
+
+    def _activate_provider(self, provider):
+        self.model = provider.model
+        self.api_key = provider.api_key
+        self.base_url = provider.base_url
+        self.endpoint_mode = provider.endpoint_mode
 
     def _should_use_claude_messages(self):
         if self.endpoint_mode in {"claude", "anthropic", "messages"}:
             return True
         if self.endpoint_mode in {"openai", "chat_completions"}:
             return False
-        return self.base_url.endswith("/claude")
+        lowered = self.base_url.lower()
+        return lowered.endswith("/claude") or "/messages" in lowered or "/anthropic" in lowered
 
     def _request_openai_chat(self, system_prompt, payload):
         request_payload = {

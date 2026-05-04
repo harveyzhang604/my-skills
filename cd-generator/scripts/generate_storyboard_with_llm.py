@@ -70,7 +70,127 @@ def visible_dialogues(page, limit=8):
     return dialogues[:limit]
 
 
+def dialogue_text_pair(line):
+    en = str(line.get("text_en") or "").strip()
+    zh = str(line.get("text_zh") or "").strip()
+    return en, zh
+
+
+def is_readable_bubble(en, zh):
+    return bool(en and zh and len(en.split()) <= 12 and len(zh) <= 20)
+
+
+def bubble_story_score(line, index, page):
+    en, zh = dialogue_text_pair(line)
+    lower = en.lower()
+    score = 0
+    if index <= 1:
+        score += 40
+    if "?" in en or "？" in zh:
+        score += 35
+    task_markers = [
+        "brief", "task", "need", "first", "start", "show", "clarify",
+        "confirm", "help", "deadline", "change", "revise", "review",
+        "plan", "next", "could you", "can you", "let's", "we should",
+    ]
+    if any(marker in lower for marker in task_markers):
+        score += 32
+    emotion_markers = [
+        "nervous", "worried", "sorry", "stuck", "confused", "ready",
+        "thank", "welcome", "understand", "i see", "i'm not sure",
+    ]
+    emotion = str(line.get("emotion") or "").lower()
+    if any(marker in lower or marker in emotion for marker in emotion_markers):
+        score += 22
+
+    speaking_goal = str(page.get("speaking_goal") or "").lower()
+    goal_words = {
+        word
+        for word in re.findall(r"[a-z]{4,}", speaking_goal)
+        if word not in {"with", "from", "that", "this", "your", "about"}
+    }
+    if goal_words:
+        overlap = sum(1 for word in goal_words if word in lower)
+        score += min(overlap * 12, 36)
+    if not is_readable_bubble(en, zh):
+        score -= 100
+    return score
+
+
+def select_key_bubbles_for_image(page, max_bubbles=3):
+    """
+    从页面中选择最关键的双语对话，用于在图片气泡中显示。
+    选择标准：
+    1. 场景开场白（帮助理解场景）
+    2. 关键信息或转折（推进剧情）
+    3. 情感反应或心理活动（引导用户共情）
+
+    返回格式：[(en_text, zh_text, speaker, emotion), ...]
+    """
+    dialogues = page.get("dialogues", [])
+    if not dialogues:
+        return []
+
+    scored = []
+    for index, line in enumerate(dialogues, start=1):
+        en, zh = dialogue_text_pair(line)
+        if not is_readable_bubble(en, zh):
+            continue
+        scored.append((bubble_story_score(line, index, page), index, line))
+
+    if not scored:
+        return []
+
+    selected = []
+
+    def add_line(line):
+        en, zh = dialogue_text_pair(line)
+        normalized = re.sub(r"\W+", "", en.lower())
+        if any(re.sub(r"\W+", "", item[0].lower()) == normalized for item in selected):
+            return
+        speaker = line.get("speaker_en") or line.get("speaker") or ""
+        emotion = line.get("emotion") or ""
+        selected.append((en, zh, speaker, emotion))
+
+    # 先放一个能定位场景/关系的开场短句，再放真正推动任务或冲突的句子。
+    for _, _, line in scored[:2]:
+        if len(selected) < 2:
+            add_line(line)
+
+    for _, _, line in sorted(scored, key=lambda item: (-item[0], item[1])):
+        if len(selected) >= max_bubbles:
+            break
+        add_line(line)
+
+    return selected[:max_bubbles]
+
+
+def format_bubbles_for_prompt(bubbles):
+    """
+    将双语气泡列表格式化为图片提示词中的明确指令。
+
+    例如：
+    Speech bubbles with bilingual text:
+    - LEFT zone: "Good morning! / 早上好！" (Lin Xiao)
+    - CENTER zone: "Welcome to the team! / 欢迎加入团队！" (Sarah)
+    """
+    if not bubbles:
+        return ""
+
+    zones = ["LEFT zone", "CENTER zone", "RIGHT zone"]
+    lines = ["Include 1-3 bilingual Chinese + English speech bubbles:"]
+
+    for i, (en, zh, speaker, emotion) in enumerate(bubbles[:3]):
+        zone = zones[i] if i < len(zones) else f"zone {i+1}"
+        lines.append(f'  - {zone}: "{en} / {zh}" ({speaker})')
+
+    return "\n".join(lines)
+
+
 def build_payload(story, chapter, page, art_style):
+    key_bubbles = select_key_bubbles_for_image(page, max_bubbles=3)
+    bubble_instruction = format_bubbles_for_prompt(key_bubbles)
+
     return {
         "story": {
             "title": story.get("title"),
@@ -94,6 +214,8 @@ def build_payload(story, chapter, page, art_style):
             "emotional_arc": page.get("emotional_arc"),
             "speaking_goal": page.get("speaking_goal"),
             "dialogues": visible_dialogues(page),
+            "key_bubbles": key_bubbles,
+            "bubble_instruction": bubble_instruction,
         },
         "art_style": art_style,
         "scene2talk_constraints": {
@@ -101,7 +223,8 @@ def build_payload(story, chapter, page, art_style):
             "composition": "left/center/right zones or diagonal split",
             "visible_text": "bilingual Chinese + English speech bubbles/captions for dialogue practice",
             "bubble_budget": "max 2 bilingual bubbles/captions per visible scene, max 6 in the whole image, default 1-3; only multi-scene, ensemble, or dream-montage pages should approach 6",
-            "bubble_length": "keep each bubble short and readable: English ideally <= 8 words, Chinese ideally <= 14 characters, English above Chinese",
+            "bubble_format": 'English above Chinese, e.g. "Good morning! / 早上好！"',
+            "bubble_instruction": bubble_instruction,
             "ui_safety": "avoid the top 12% of the image for speech bubbles, faces, and key readable text; keep a 6% left/right edge margin for bubbles, faces, and important props",
         },
     }
@@ -132,7 +255,7 @@ def validate_storyboard(data, chapter_number, page_number):
         raise ValueError("image_prompt 未明确中英双语气泡/字幕")
 
 
-def normalize_storyboard_prompt(data):
+def normalize_storyboard_prompt(data, page=None):
     storyboard = data.setdefault("storyboard", {})
     prompt = remove_english_only_conflicts(str(storyboard.get("image_prompt") or "").strip())
     lower = prompt.lower()
@@ -144,6 +267,25 @@ def normalize_storyboard_prompt(data):
         or "diagonal" in lower
     ):
         additions.append("clear LEFT/CENTER/RIGHT horizontal zones")
+
+    # 添加具体的气泡内容到提示词中
+    if page:
+        key_bubbles = select_key_bubbles_for_image(page, max_bubbles=3)
+        if key_bubbles:
+            bubble_lines = []
+            zones = ["LEFT zone", "CENTER zone", "RIGHT zone"]
+            for i, (en, zh, speaker, emotion) in enumerate(key_bubbles[:3]):
+                zone = zones[i] if i < len(zones) else f"zone {i+1}"
+                # 限制长度，确保简洁
+                en_short = en[:60] if len(en) > 60 else en
+                zh_short = zh[:40] if len(zh) > 40 else zh
+                bubble_lines.append(f'{zone}: "{en_short} / {zh_short}"')
+
+            bubble_instruction = " | ".join(bubble_lines)
+            # 确保气泡内容被明确写入提示词
+            if not has_specific_bubble_text(prompt, key_bubbles):
+                additions.append(f'Include 1-3 bilingual Chinese + English speech bubbles/captions with EXACT visible text to guide the viewer through the scene background, character action, and task progress: {bubble_instruction}')
+
     if not has_bilingual_text_rule(prompt):
         additions.append('visible dialogue text should use bilingual Chinese + English speech bubbles, for example "I must go. / 我必须去。"')
     if not has_ui_safety_rule(prompt):
@@ -152,6 +294,21 @@ def normalize_storyboard_prompt(data):
         prompt = f"{prompt}. " + ". ".join(additions) + "."
         storyboard["image_prompt"] = prompt
     return data
+
+
+def has_specific_bubble_text(prompt, bubbles):
+    """检查提示词是否已经包含具体的气泡文本"""
+    if not bubbles:
+        return True  # 没有气泡需要检查
+    for en, zh, speaker, emotion in bubbles[:2]:
+        # 检查英文或中文是否在提示词中
+        en_words = en.split()[:4]  # 前4个单词
+        zh_chars = zh[:6]  # 前6个字符
+        if en_words and " ".join(en_words) in prompt:
+            return True
+        if zh_chars and zh_chars in prompt:
+            return True
+    return False
 
 
 def remove_english_only_conflicts(prompt):
@@ -258,7 +415,7 @@ def main():
             print(f"⏳ shanyin-direct：正在生成 chapter{args.chapter}_page{page_number} 分镜", flush=True)
             payload = build_payload(story, chapter, page, args.art_style)
             storyboard = client.request_json("generate_storyboard_page", payload)
-            storyboard = normalize_storyboard_prompt(storyboard)
+            storyboard = normalize_storyboard_prompt(storyboard, page)
             validate_storyboard(storyboard, args.chapter, page_number)
             save_json(output_path, storyboard)
             completed += 1
